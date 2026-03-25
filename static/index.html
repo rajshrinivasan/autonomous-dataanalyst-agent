@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Autonomous Data Analyst</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --accent:    #58a6ff;
+
+      --c-manager:  #58a6ff;   /* blue   */
+      --c-explorer: #39d353;   /* green  */
+      --c-sql:      #f0b429;   /* amber  */
+      --c-analyst:  #bf91f3;   /* purple */
+      --c-writer:   #56d3d3;   /* teal   */
+    }
+
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+
+    /* ── Layout ───────────────────────────────────────────────── */
+    .page        { display: flex; flex-direction: column; height: 100vh; }
+
+    header       { padding: 1.25rem 2rem; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 1rem; }
+    header h1    { font-size: 1.2rem; font-weight: 600; color: var(--text); }
+    header p     { font-size: 0.82rem; color: var(--muted); }
+
+    .input-row   { padding: 1rem 2rem; border-bottom: 1px solid var(--border); display: flex; gap: 0.75rem; align-items: flex-end; }
+    textarea     { flex: 1; resize: none; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 0.7rem 1rem; font-size: 0.95rem; font-family: inherit; line-height: 1.45; min-height: 3.5rem; max-height: 8rem; outline: none; transition: border-color .15s; }
+    textarea:focus { border-color: var(--accent); }
+    .btn         { padding: 0.65rem 1.25rem; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none; transition: opacity .15s; white-space: nowrap; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #0d1117; }
+    .btn-ghost   { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+
+    .examples    { padding: 0.5rem 2rem; display: flex; gap: 0.5rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+    .ex-chip     { padding: 0.3rem 0.7rem; border-radius: 20px; font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); cursor: pointer; transition: all .15s; background: none; }
+    .ex-chip:hover { color: var(--text); border-color: var(--accent); }
+
+    .panels      { flex: 1; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; }
+
+    /* ── Activity feed ────────────────────────────────────────── */
+    .activity    { overflow-y: auto; padding: 1.25rem; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.2rem; }
+
+    .placeholder { margin: auto; text-align: center; color: var(--muted); font-size: 0.85rem; padding: 3rem 0; }
+
+    .step        { font-size: 0.82rem; display: flex; align-items: baseline; gap: 0.5rem; }
+
+    .badge       { font-size: 0.68rem; font-weight: 700; padding: 0.15rem 0.45rem; border-radius: 4px; letter-spacing: .04em; white-space: nowrap; flex-shrink: 0; }
+
+    .tool-line   { padding-left: 1.6rem; color: var(--muted); font-family: "SF Mono", "Fira Code", monospace; }
+    .tool-line span.arrow { color: var(--border); margin-right: .3rem; }
+
+    .result-line { padding-left: 1.6rem; color: #636e7b; font-size: 0.76rem; font-family: "SF Mono", "Fira Code", monospace; white-space: pre-wrap; word-break: break-word; max-height: 3.5rem; overflow: hidden; }
+
+    .delta-line  { padding-left: 1.6rem; color: var(--muted); font-size: 0.82rem; line-height: 1.5; }
+
+    .chart-thumb { padding-left: 1.6rem; margin: 0.4rem 0; }
+    .chart-thumb img { width: 120px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+
+    /* ── Report panel ─────────────────────────────────────────── */
+    .report      { overflow-y: auto; padding: 1.5rem 2rem; }
+
+    .report-placeholder { margin: auto; text-align: center; color: var(--muted); font-size: 0.85rem; padding: 3rem 0; display: flex; flex-direction: column; gap: 0.5rem; }
+    .report-placeholder .icon { font-size: 2rem; }
+
+    .report-body { font-size: 0.9rem; line-height: 1.7; color: var(--text); }
+    .report-body h1, .report-body h2, .report-body h3 { margin-top: 1.2rem; margin-bottom: 0.4rem; color: var(--text); }
+    .report-body h1 { font-size: 1.2rem; }
+    .report-body h2 { font-size: 1.05rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+    .report-body h3 { font-size: 0.95rem; color: var(--muted); }
+    .report-body p  { margin-bottom: 0.75rem; }
+    .report-body ul, .report-body ol { margin: 0.5rem 0 0.75rem 1.5rem; }
+    .report-body li { margin-bottom: 0.3rem; }
+    .report-body code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.35rem; font-family: "SF Mono", monospace; font-size: 0.82em; }
+    .report-body pre  { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; overflow-x: auto; margin: 0.75rem 0; }
+    .report-body pre code { background: none; border: none; padding: 0; }
+    .report-body strong { color: var(--text); }
+
+    .report-chart { margin-top: 1.5rem; }
+    .report-chart img { width: 100%; border-radius: 8px; border: 1px solid var(--border); }
+    .report-chart p { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; text-align: center; }
+
+    .error-box   { background: #1a0000; border: 1px solid #5c0000; border-radius: 8px; padding: 1rem; color: #f87171; font-size: 0.85rem; margin: 1rem 0; }
+
+    .spinner     { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* agent badge colours */
+    .badge-manager  { background: #0d2444; color: var(--c-manager); }
+    .badge-explorer { background: #0d2e1a; color: var(--c-explorer); }
+    .badge-sql      { background: #2e1f00; color: var(--c-sql); }
+    .badge-analyst  { background: #1d0e33; color: var(--c-analyst); }
+    .badge-writer   { background: #0a2929; color: var(--c-writer); }
+
+    .divider { border: none; border-top: 1px solid var(--border); margin: 0.6rem 0; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <header>
+    <h1>Autonomous Data Analyst</h1>
+    <p>Manager &rarr; Data Explorer &rarr; SQL Writer &rarr; Analyst &rarr; Writer</p>
+  </header>
+
+  <!-- Input row -->
+  <div class="input-row">
+    <textarea id="q" rows="2" placeholder="Ask a business question about the e-commerce database…" onkeydown="handleKey(event)"></textarea>
+    <button class="btn btn-primary" id="submitBtn" onclick="submitQuestion()">Analyze</button>
+    <button class="btn btn-ghost" onclick="resetUI()">Clear</button>
+  </div>
+
+  <!-- Example questions -->
+  <div class="examples" id="examples">
+    <button class="ex-chip" onclick="setQuestion(this)">Top 5 categories by revenue?</button>
+    <button class="ex-chip" onclick="setQuestion(this)">Which month had the highest sales in 2024?</button>
+    <button class="ex-chip" onclick="setQuestion(this)">What is the gross margin by category?</button>
+    <button class="ex-chip" onclick="setQuestion(this)">Who are the top 10 customers by spend?</button>
+    <button class="ex-chip" onclick="setQuestion(this)">How does order status break down by country?</button>
+  </div>
+
+  <!-- Main panels -->
+  <div class="panels">
+
+    <!-- Left: activity feed -->
+    <div class="activity" id="activity">
+      <div class="placeholder" id="activityPlaceholder">
+        Agent activity will appear here as the analysis runs.
+      </div>
+    </div>
+
+    <!-- Right: report -->
+    <div class="report" id="reportPanel">
+      <div class="report-placeholder" id="reportPlaceholder">
+        <span class="icon">&#128202;</span>
+        <span>The written report and chart will appear here once the analysis completes.</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ── marked config ────────────────────────────────────────── */
+marked.setOptions({ breaks: true, gfm: true });
+
+/* ── Agent metadata ───────────────────────────────────────── */
+const AGENTS = {
+  manager:       { label: 'Manager',       cls: 'badge-manager'  },
+  data_explorer: { label: 'Data Explorer', cls: 'badge-explorer' },
+  sql_writer:    { label: 'SQL Writer',    cls: 'badge-sql'      },
+  analyst:       { label: 'Analyst',       cls: 'badge-analyst'  },
+  writer:        { label: 'Writer',        cls: 'badge-writer'   },
+};
+
+/* tool name → friendly specialist label */
+const TOOL_AGENT = {
+  call_data_explorer: { label: 'Data Explorer', cls: 'badge-explorer' },
+  call_sql_writer:    { label: 'SQL Writer',    cls: 'badge-sql'      },
+  call_analyst:       { label: 'Analyst',       cls: 'badge-analyst'  },
+  call_writer:        { label: 'Writer',        cls: 'badge-writer'   },
+};
+
+/* ── State ────────────────────────────────────────────────── */
+let pendingToolEl  = null;   // the spinner element for the in-flight tool
+let chartUrl       = null;   // most recent chart URL
+let deltaBuffer    = '';
+let deltaEl        = null;
+
+/* ── DOM helpers ──────────────────────────────────────────── */
+const activity     = () => document.getElementById('activity');
+const reportPanel  = () => document.getElementById('reportPanel');
+
+function appendActivity(el) {
+  const ph = document.getElementById('activityPlaceholder');
+  if (ph) ph.remove();
+  activity().appendChild(el);
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+function makeEl(tag, cls, html = '') {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (html) el.innerHTML = html;
+  return el;
+}
+
+/* ── UI actions ───────────────────────────────────────────── */
+function setQuestion(btn) {
+  document.getElementById('q').value = btn.textContent;
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitQuestion(); }
+}
+
+function resetUI() {
+  document.getElementById('q').value = '';
+  document.getElementById('activity').innerHTML =
+    '<div class="placeholder" id="activityPlaceholder">Agent activity will appear here as the analysis runs.</div>';
+  document.getElementById('reportPanel').innerHTML =
+    `<div class="report-placeholder" id="reportPlaceholder">
+       <span class="icon">&#128202;</span>
+       <span>The written report and chart will appear here once the analysis completes.</span>
+     </div>`;
+  pendingToolEl = null; chartUrl = null; deltaBuffer = ''; deltaEl = null;
+  document.getElementById('submitBtn').disabled = false;
+}
+
+/* ── Main: submit ─────────────────────────────────────────── */
+async function submitQuestion() {
+  const question = document.getElementById('q').value.trim();
+  if (!question) return;
+
+  resetUI();
+  document.getElementById('activityPlaceholder').remove();
+  document.getElementById('submitBtn').disabled = true;
+
+  // Show thinking indicator
+  const thinking = makeEl('div', 'step');
+  thinking.innerHTML = '<div class="spinner"></div><span style="color:var(--muted);font-size:.8rem">Starting analysis…</span>';
+  activity().appendChild(thinking);
+
+  try {
+    const resp = await fetch('/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || resp.statusText);
+    }
+
+    thinking.remove();
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf     = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();                         // keep incomplete chunk
+
+      for (const part of parts) {
+        for (const line of part.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          try { handleEvent(JSON.parse(line.slice(6))); } catch (_) { /* skip bad JSON */ }
+        }
+      }
+    }
+
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    document.getElementById('submitBtn').disabled = false;
+  }
+}
+
+/* ── Event router ─────────────────────────────────────────── */
+function handleEvent(ev) {
+  switch (ev.type) {
+    case 'agent_switch': onAgentSwitch(ev);   break;
+    case 'text_delta':   onTextDelta(ev);     break;
+    case 'tool_call':    onToolCall(ev);      break;
+    case 'tool_result':  onToolResult(ev);    break;
+    case 'chart':        onChart(ev);         break;
+    case 'done':         onDone(ev);          break;
+    case 'error':        showError(ev.message); break;
+  }
+}
+
+/* ── Event handlers ───────────────────────────────────────── */
+function onAgentSwitch(ev) {
+  flushDelta();
+  const meta = AGENTS[ev.agent] || { label: ev.agent, cls: 'badge-manager' };
+  const row  = makeEl('div', 'step');
+  row.style.marginTop = '0.6rem';
+  row.innerHTML = `<span class="badge ${meta.cls}">${meta.label}</span>`;
+  appendActivity(row);
+}
+
+function onToolCall(ev) {
+  flushDelta();
+  const meta = TOOL_AGENT[ev.tool];
+
+  if (meta) {
+    // Specialist delegate — show badge + spinner
+    const hr  = makeEl('hr', 'divider');
+    const row = makeEl('div', 'step');
+    row.innerHTML =
+      `<span class="badge ${meta.cls}" style="margin-left:1.6rem">${meta.label}</span>` +
+      `<div class="spinner" id="spinner-${ev.tool}"></div>`;
+    appendActivity(hr);
+    appendActivity(row);
+    pendingToolEl = row;
+  } else {
+    // Internal tool (list_tables, get_schema, run_query, run_python_code)
+    const row = makeEl('div', 'tool-line');
+    row.innerHTML = `<span class="arrow">&rsaquo;</span>${ev.tool}()`;
+    appendActivity(row);
+  }
+}
+
+function onToolResult(ev) {
+  // Remove spinner from the pending specialist row
+  if (pendingToolEl) {
+    const spinner = pendingToolEl.querySelector('.spinner');
+    if (spinner) spinner.remove();
+    pendingToolEl = null;
+  }
+
+  // Show a trimmed preview of the result
+  const snippet = (ev.output || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  if (snippet) {
+    const row = makeEl('div', 'result-line', escHtml(snippet) + (ev.output.length > 180 ? ' …' : ''));
+    appendActivity(row);
+  }
+}
+
+function onTextDelta(ev) {
+  // Manager is generating text — accumulate and show as it streams
+  if (!deltaEl) {
+    deltaEl = makeEl('div', 'delta-line');
+    appendActivity(deltaEl);
+  }
+  deltaBuffer += ev.delta;
+  deltaEl.innerHTML = marked.parse(deltaBuffer);
+  deltaEl.scrollIntoView({ block: 'nearest' });
+}
+
+function flushDelta() {
+  if (deltaEl && deltaBuffer) {
+    deltaEl.innerHTML = marked.parse(deltaBuffer);
+  }
+  deltaBuffer = '';
+  deltaEl = null;
+}
+
+function onChart(ev) {
+  chartUrl = ev.url;
+
+  // Thumbnail in activity feed
+  const wrap = makeEl('div', 'chart-thumb');
+  wrap.innerHTML = `<img src="${ev.url}" alt="chart" />`;
+  appendActivity(wrap);
+}
+
+function onDone(ev) {
+  flushDelta();
+
+  const ph = document.getElementById('reportPlaceholder');
+  if (ph) ph.remove();
+
+  // Render markdown report
+  const body = makeEl('div', 'report-body');
+  body.innerHTML = marked.parse(ev.output || '');
+  reportPanel().appendChild(body);
+
+  // Render chart below report
+  if (chartUrl) {
+    const chartWrap = makeEl('div', 'report-chart');
+    chartWrap.innerHTML =
+      `<img src="${chartUrl}" alt="Analysis chart" />` +
+      `<p>Generated chart</p>`;
+    reportPanel().appendChild(chartWrap);
+  }
+}
+
+function showError(msg) {
+  const el = makeEl('div', 'error-box', 'Error: ' + escHtml(msg));
+  appendActivity(el);
+  document.getElementById('submitBtn').disabled = false;
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>

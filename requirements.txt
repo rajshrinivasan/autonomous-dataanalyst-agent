@@ -1,0 +1,7 @@
+openai-agents
+mcp
+fastapi
+uvicorn[standard]
+matplotlib
+pandas
+python-dotenv

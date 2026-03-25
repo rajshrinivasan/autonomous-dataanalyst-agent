@@ -1,0 +1,26 @@
+# Virtual environment
+.venv/
+
+# Environment / secrets
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Generated outputs
+output/charts/*.png
+
+# Generated database (recreate with: python data/seed_db.py)
+data/sample.db
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Logs
+*.log
