@@ -11,7 +11,7 @@ __pycache__/
 .pytest_cache/
 
 # Generated outputs
-output/charts/*.png
+output/**/*.png
 
 # Generated database (recreate with: python data/seed_db.py)
 data/sample.db
@@ -24,3 +24,4 @@ Thumbs.db
 
 # Logs
 *.log
+tmp/
