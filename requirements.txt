@@ -1,4 +1,8 @@
-openai-agents
+langgraph>=0.2
+langchain-openai>=0.1
+langchain-core>=0.2
+langchain-mcp-adapters>=0.1
+openai>=1.0
 mcp
 fastapi
 uvicorn[standard]
