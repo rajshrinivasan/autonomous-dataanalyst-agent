@@ -78,15 +78,30 @@ def _mcp_server(
     )
 
 
+def _governance_server() -> MCPServerStdio:
+    """Return the stateless SQL governance MCP server."""
+    script = Path(__file__).parent / "mcp_servers" / "governance_server.py"
+    return MCPServerStdio(
+        params={
+            "command": sys.executable,
+            "args":    [str(script)],
+            "cwd":     str(Path(__file__).parent),
+        },
+        cache_tools_list=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Agent factory
 # ---------------------------------------------------------------------------
-def build_team(sqlite_mcp: MCPServerStdio) -> Agent:
+def build_team(sqlite_mcp: MCPServerStdio, governance_mcp: MCPServerStdio) -> Agent:
     """
     Construct all five agents.
 
     Specialists are wrapped with .as_tool() so the manager can call them and
     receive their output back — true magentic-style delegation.
+    sql_writer gets both the warehouse MCP (schema access) and governance MCP
+    (lint_sql, estimate_cost) so it can validate queries before returning them.
     """
     data_explorer = Agent(
         name="data_explorer",
@@ -99,7 +114,7 @@ def build_team(sqlite_mcp: MCPServerStdio) -> Agent:
         name="sql_writer",
         model=MODEL,
         instructions=_load("sql_writer"),
-        mcp_servers=[sqlite_mcp],
+        mcp_servers=[sqlite_mcp, governance_mcp],
     )
 
     analyst = Agent(
@@ -188,83 +203,84 @@ async def run_analysis(
 
     try:
         async with _mcp_server(datasource_id=datasource_id, workspace_id=workspace_id) as sqlite_mcp:
-            manager = build_team(sqlite_mcp)
+            async with _governance_server() as governance_mcp:
+                manager = build_team(sqlite_mcp, governance_mcp)
 
-            result = Runner.run_streamed(manager, question)
+                result = Runner.run_streamed(manager, question)
 
-            async for event in result.stream_events():
+                async for event in result.stream_events():
 
-                # ── Agent switch ─────────────────────────────────────────
-                if isinstance(event, AgentUpdatedStreamEvent):
-                    current_agent = event.new_agent.name
-                    yield {"type": "agent_switch", "agent": current_agent}
+                    # ── Agent switch ─────────────────────────────────────────
+                    if isinstance(event, AgentUpdatedStreamEvent):
+                        current_agent = event.new_agent.name
+                        yield {"type": "agent_switch", "agent": current_agent}
 
-                # ── Streaming text delta ─────────────────────────────────
-                elif isinstance(event, RawResponsesStreamEvent):
-                    raw = event.data
-                    if isinstance(raw, ResponseTextDeltaEvent):
-                        yield {
-                            "type":  "text_delta",
-                            "agent": current_agent,
-                            "delta": raw.delta,
-                        }
+                    # ── Streaming text delta ─────────────────────────────────
+                    elif isinstance(event, RawResponsesStreamEvent):
+                        raw = event.data
+                        if isinstance(raw, ResponseTextDeltaEvent):
+                            yield {
+                                "type":  "text_delta",
+                                "agent": current_agent,
+                                "delta": raw.delta,
+                            }
 
-                # ── Tool calls / results ─────────────────────────────────
-                elif isinstance(event, RunItemStreamEvent):
-                    item = event.item
+                    # ── Tool calls / results ─────────────────────────────────
+                    elif isinstance(event, RunItemStreamEvent):
+                        item = event.item
 
-                    if item.type == "tool_call_item":
-                        tool_name = getattr(item.raw_item, "name", "tool")
-                        yield {
-                            "type":  "tool_call",
-                            "agent": current_agent,
-                            "tool":  tool_name,
-                        }
+                        if item.type == "tool_call_item":
+                            tool_name = getattr(item.raw_item, "name", "tool")
+                            yield {
+                                "type":  "tool_call",
+                                "agent": current_agent,
+                                "tool":  tool_name,
+                            }
 
-                    elif item.type == "tool_call_output_item":
-                        # item.output may be a string or list of MCP content blocks
-                        raw_out = item.output
-                        if isinstance(raw_out, str):
-                            output = raw_out
-                        elif isinstance(raw_out, list):
-                            output = " ".join(
-                                (b.text if hasattr(b, "text") else str(b))
-                                for b in raw_out
-                            )
-                        else:
-                            output = str(raw_out) if raw_out else ""
+                        elif item.type == "tool_call_output_item":
+                            # item.output may be a string or list of MCP content blocks
+                            raw_out = item.output
+                            if isinstance(raw_out, str):
+                                output = raw_out
+                            elif isinstance(raw_out, list):
+                                output = " ".join(
+                                    (b.text if hasattr(b, "text") else str(b))
+                                    for b in raw_out
+                                )
+                            else:
+                                output = str(raw_out) if raw_out else ""
 
-                        # Detect chart files in the analyst's output (deduplicated).
-                        # Strategy 1: explicit CHART_SAVED: prefix
-                        chart_found = False
-                        for line in output.splitlines():
-                            if line.startswith("CHART_SAVED:"):
-                                chart_path = line[len("CHART_SAVED:"):].strip()
-                                if chart_path not in emitted_charts:
-                                    emitted_charts.add(chart_path)
-                                    yield {"type": "chart", "path": chart_path}
-                                chart_found = True
-                                break
-
-                        if not chart_found:
-                            # Strategy 2: regex scan for chart_<hex>.png anywhere in text
-                            charts_dir = Path(os.getenv("CHARTS_DIR", "output/charts"))
-                            for match in re.finditer(r"chart_[0-9a-f]{8,}\.png", output):
-                                candidate = charts_dir / match.group()
-                                key = str(candidate)
-                                if candidate.exists() and key not in emitted_charts:
-                                    emitted_charts.add(key)
-                                    yield {"type": "chart", "path": key}
+                            # Detect chart files in the analyst's output (deduplicated).
+                            # Strategy 1: explicit CHART_SAVED: prefix
+                            chart_found = False
+                            for line in output.splitlines():
+                                if line.startswith("CHART_SAVED:"):
+                                    chart_path = line[len("CHART_SAVED:"):].strip()
+                                    if chart_path not in emitted_charts:
+                                        emitted_charts.add(chart_path)
+                                        yield {"type": "chart", "path": chart_path}
+                                    chart_found = True
                                     break
 
-                        yield {
-                            "type":   "tool_result",
-                            "agent":  current_agent,
-                            "output": output[:400] + ("..." if len(output) > 400 else ""),
-                        }
+                            if not chart_found:
+                                # Strategy 2: regex scan for chart_<hex>.png anywhere in text
+                                charts_dir = Path(os.getenv("CHARTS_DIR", "output/charts"))
+                                for match in re.finditer(r"chart_[0-9a-f]{8,}\.png", output):
+                                    candidate = charts_dir / match.group()
+                                    key = str(candidate)
+                                    if candidate.exists() and key not in emitted_charts:
+                                        emitted_charts.add(key)
+                                        yield {"type": "chart", "path": key}
+                                        break
 
-            # ── Final synthesised output ─────────────────────────────────
-            yield {"type": "done", "output": result.final_output}
+                            yield {
+                                "type":   "tool_result",
+                                "agent":  current_agent,
+                                "output": output[:400] + ("..." if len(output) > 400 else ""),
+                            }
+
+                # ── Final synthesised output ─────────────────────────────────
+                yield {"type": "done", "output": result.final_output}
 
     except Exception as exc:
         yield {"type": "error", "message": str(exc)}
