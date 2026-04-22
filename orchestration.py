@@ -48,12 +48,23 @@ def _load(name: str) -> str:
     return (_INS_DIR / f"{name}.md").read_text(encoding="utf-8")
 
 
-def _mcp_server() -> MCPServerStdio:
-    """Return a configured stdio MCP server pointing at mcp_server.py."""
+def _mcp_server(datasource_id: str | None = None) -> MCPServerStdio:
+    """Return a configured stdio MCP server.
+
+    When datasource_id is provided, launches warehouse_server.py which looks
+    up the datasource record in Postgres and connects to the target engine.
+    Falls back to the original mcp_server.py (SQLite hardcoded) otherwise.
+    """
+    if datasource_id:
+        script = Path(__file__).parent / "mcp_servers" / "warehouse_server.py"
+        args = ["--datasource-id", datasource_id]
+    else:
+        script = Path(__file__).parent / "mcp_server.py"
+        args = []
     return MCPServerStdio(
         params={
             "command": sys.executable,
-            "args":    [str(Path(__file__).parent / "mcp_server.py")],
+            "args":    [str(script)] + args,
             "cwd":     str(Path(__file__).parent),
         },
         cache_tools_list=True,
@@ -169,7 +180,7 @@ async def run_analysis(
     emitted_charts: set[str] = set()   # deduplicate chart events
 
     try:
-        async with _mcp_server() as sqlite_mcp:
+        async with _mcp_server(datasource_id=datasource_id) as sqlite_mcp:
             manager = build_team(sqlite_mcp)
 
             result = Runner.run_streamed(manager, question)
