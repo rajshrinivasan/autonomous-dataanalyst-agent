@@ -1,0 +1,272 @@
+{
+  "cases": [
+    {
+      "id": "top_categories_revenue",
+      "description": "Top 5 categories by revenue — most common business question",
+      "question": "What are the top 5 product categories by total revenue?",
+      "tags": ["revenue", "aggregation", "ranking"],
+      "sql_checks": {
+        "must_contain_tables": ["categories", "order_items"],
+        "must_use_aggregation": true,
+        "must_use_join": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["name"],
+        "row_count_exact": 5,
+        "first_row_contains": {"name": "Electronics"}
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3,
+        "insights_must_mention": ["Electronics", "%"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "monthly_order_trend",
+      "description": "Monthly order volume over time — tests SQLite date functions",
+      "question": "How has the monthly order volume changed over the past two years?",
+      "tags": ["time_series", "date_functions", "trend"],
+      "sql_checks": {
+        "must_contain_tables": ["orders"],
+        "must_use_strftime": true,
+        "must_use_aggregation": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["month"],
+        "row_count_min": 12,
+        "column_pattern": {"month": "^\\d{4}-\\d{2}$"}
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "top_products_revenue",
+      "description": "Top 5 products by revenue — product-level detail",
+      "question": "What are the top 5 best-selling products by total revenue?",
+      "tags": ["revenue", "products", "ranking"],
+      "sql_checks": {
+        "must_contain_tables": ["products", "order_items"],
+        "must_use_aggregation": true,
+        "must_use_join": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["name"],
+        "row_count_exact": 5,
+        "first_row_contains": {"name": "Monitor"}
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "order_status_breakdown",
+      "description": "Order status distribution — simple GROUP BY with no JOINs",
+      "question": "What percentage of orders are in each status (delivered, shipped, pending, cancelled)?",
+      "tags": ["status", "distribution", "aggregation"],
+      "sql_checks": {
+        "must_contain_tables": ["orders"],
+        "must_use_aggregation": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["status"],
+        "row_count_exact": 4,
+        "allowed_column_values": {"status": ["delivered", "shipped", "pending", "cancelled"]}
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3,
+        "insights_must_mention": ["delivered", "%"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "customer_lifetime_value",
+      "description": "Top 10 customers by lifetime value — multi-table join with customer data",
+      "question": "Who are our top 10 customers by total spend?",
+      "tags": ["customers", "lifetime_value", "ranking"],
+      "sql_checks": {
+        "must_contain_tables": ["customers", "orders", "order_items"],
+        "must_use_aggregation": true,
+        "must_use_join": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["name"],
+        "row_count_min": 5,
+        "numeric_min": 500.0
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "low_stock_products",
+      "description": "Inventory alert — single-table filter with no aggregation",
+      "question": "Which products have fewer than 20 units in stock?",
+      "tags": ["inventory", "filtering", "simple"],
+      "sql_checks": {
+        "must_contain_tables": ["products"],
+        "must_use_where": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["name", "stock_qty"],
+        "row_count_min": 1,
+        "numeric_column": "stock_qty",
+        "numeric_max": 19
+      },
+      "analyst_checks": {
+        "chart_required": false,
+        "min_insights": 2
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "repeat_customer_rate",
+      "description": "Retention metric — tests subquery or HAVING pattern",
+      "question": "What percentage of customers have placed more than one order?",
+      "tags": ["retention", "subquery", "percentage"],
+      "sql_checks": {
+        "must_contain_tables": ["orders"],
+        "must_use_aggregation": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "row_count_min": 1,
+        "any_numeric_gt": 80.0
+      },
+      "analyst_checks": {
+        "chart_required": false,
+        "min_insights": 2,
+        "insights_must_mention": ["%"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "revenue_by_country",
+      "description": "Geographic breakdown — joins customer location with order revenue",
+      "question": "Which countries generate the most revenue?",
+      "tags": ["geography", "revenue", "aggregation"],
+      "sql_checks": {
+        "must_contain_tables": ["customers", "order_items"],
+        "must_contain_columns": ["country"],
+        "must_use_aggregation": true,
+        "must_use_join": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["country"],
+        "row_count_min": 3
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "yearly_revenue_growth",
+      "description": "Year-over-year revenue — tests strftime('%Y') and multi-year comparison",
+      "question": "How has total revenue changed year over year?",
+      "tags": ["time_series", "growth", "yoy"],
+      "sql_checks": {
+        "must_contain_tables": ["orders", "order_items"],
+        "must_use_strftime": true,
+        "must_use_aggregation": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["year"],
+        "row_count_min": 2,
+        "column_pattern": {"year": "^\\d{4}$"}
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3,
+        "insights_must_mention": ["2023", "2024"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    },
+    {
+      "id": "product_gross_margin",
+      "description": "Gross margin by category — tests multi-column arithmetic across tables",
+      "question": "Which product categories have the highest gross margin percentage?",
+      "tags": ["margin", "arithmetic", "ranking"],
+      "sql_checks": {
+        "must_contain_tables": ["categories", "products"],
+        "must_contain_columns": ["cost"],
+        "must_use_aggregation": true,
+        "must_use_join": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["name"],
+        "row_count_min": 3
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3,
+        "insights_must_mention": ["%"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 500
+      }
+    }
+  ]
+}
