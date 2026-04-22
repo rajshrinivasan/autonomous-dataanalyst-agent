@@ -60,8 +60,12 @@ mcp = FastMCP("warehouse-analyst")
 # ---------------------------------------------------------------------------
 # Startup helpers
 # ---------------------------------------------------------------------------
-def _load_datasource(datasource_id: str) -> dict:
-    """Fetch datasource record from Postgres synchronously."""
+def _load_datasource(datasource_id: str, workspace_id: str) -> dict:
+    """Fetch datasource record from Postgres synchronously.
+
+    Filters by both id and workspace_id so a client cannot query a datasource
+    that belongs to a different tenant by guessing its UUID.
+    """
     if not _POSTGRES_DSN_SYNC:
         raise ValueError("POSTGRES_DSN_SYNC is not set")
 
@@ -70,15 +74,17 @@ def _load_datasource(datasource_id: str) -> dict:
         cur = conn.cursor()
         cur.execute(
             "SELECT type, connection_secret_ref, default_schema, row_limit "
-            "FROM datasources WHERE id = %s",
-            (datasource_id,),
+            "FROM datasources WHERE id = %s AND workspace_id = %s",
+            (datasource_id, workspace_id),
         )
         row = cur.fetchone()
     finally:
         conn.close()
 
     if not row:
-        raise ValueError(f"Datasource '{datasource_id}' not found in Postgres")
+        raise ValueError(
+            f"Datasource '{datasource_id}' not found or does not belong to workspace '{workspace_id}'"
+        )
 
     return {
         "type": row[0],
@@ -103,10 +109,10 @@ def _build_engine(ds_type: str, conn_str: str) -> Engine:
     return create_engine(conn_str)
 
 
-def _init(datasource_id: str) -> None:
+def _init(datasource_id: str, workspace_id: str) -> None:
     global _engine, _inspector, _row_limit, _default_schema
 
-    ds = _load_datasource(datasource_id)
+    ds = _load_datasource(datasource_id, workspace_id)
     secret_ref = ds["connection_secret_ref"]
     conn_str = os.getenv(f"SECRET_{secret_ref}")
     if not conn_str:
@@ -262,13 +268,21 @@ if __name__ == "__main__":
         required=True,
         help="UUID of the datasource record in Postgres",
     )
+    parser.add_argument(
+        "--workspace-id",
+        required=True,
+        help="UUID of the requesting workspace — used to verify datasource ownership",
+    )
     args = parser.parse_args()
 
     try:
-        _init(args.datasource_id)
+        _init(args.datasource_id, args.workspace_id)
     except Exception as exc:
         logger.error("Failed to initialize warehouse server: %s", exc)
         sys.exit(1)
 
-    logger.info("Starting warehouse MCP server (stdio) — datasource: %s", args.datasource_id)
+    logger.info(
+        "Starting warehouse MCP server (stdio) — datasource: %s workspace: %s",
+        args.datasource_id, args.workspace_id,
+    )
     mcp.run()
