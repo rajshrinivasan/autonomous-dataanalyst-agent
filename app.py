@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from auth.dependencies import RequireAnalyst
 from orchestration import run_analysis
 
 load_dotenv()
@@ -49,7 +50,7 @@ async def index():
 
 
 @app.post("/analyze")
-async def analyze(request: AnalyzeRequest):
+async def analyze(request: AnalyzeRequest, user: RequireAnalyst):
     """
     Stream analysis events as Server-Sent Events.
 
@@ -61,7 +62,7 @@ async def analyze(request: AnalyzeRequest):
 
     async def generate():
         try:
-            async for event in run_analysis(request.question):
+            async for event in run_analysis(request.question, workspace_id=user.workspace_id):
                 # Rewrite filesystem chart path → servable URL
                 if event.get("type") == "chart":
                     filename = Path(event["path"]).name

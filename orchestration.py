@@ -156,7 +156,11 @@ def build_team(sqlite_mcp: MCPServerStdio) -> Agent:
 # ---------------------------------------------------------------------------
 # Public: run_analysis
 # ---------------------------------------------------------------------------
-async def run_analysis(question: str) -> AsyncIterator[dict]:
+async def run_analysis(
+    question: str,
+    workspace_id: str | None = None,
+    datasource_id: str | None = None,
+) -> AsyncIterator[dict]:
     """
     Async generator.  Run the full magentic workflow for *question* and yield
     structured event dicts suitable for forwarding as SSE.
