@@ -8,6 +8,7 @@ Envelope: {"code": "<python source>", "output_path": "/tmp/chart_X.png"}
 import builtins as _builtins_module
 import json
 import os
+import os.path as _os_path
 import sys
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp")
@@ -42,18 +43,18 @@ def _build_namespace(output_path: str, plt, pd, np, matplotlib) -> dict:
         "np": np,
         "json": json,
         "_CHART_PATH": output_path,
+        "_os_path": _os_path,  # pre-injected for postamble; not user-accessible by convention
     }
 
 
 def _postamble(output_path: str) -> str:
     p = repr(output_path)
     return (
-        "\nimport os as _os\n"
-        "_figs = plt.get_fignums()\n"
-        "if _figs and not _os.path.exists(" + p + "):\n"
+        "\n_figs = plt.get_fignums()\n"
+        "if _figs and not _os_path.exists(" + p + "):\n"
         "    plt.savefig(" + p + ", dpi=150, bbox_inches='tight')\n"
         "    plt.close('all')\n"
-        "if _os.path.exists(" + p + "):\n"
+        "if _os_path.exists(" + p + "):\n"
         "    print('CHART_SAVED:' + " + p + ")\n"
     )
 

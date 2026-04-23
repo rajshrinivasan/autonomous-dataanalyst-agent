@@ -137,11 +137,11 @@ async def data_explorer_node(state: AnalysisState, config: RunnableConfig) -> di
         HumanMessage(content=state["question"]),
     ]
 
-    async with MultiServerMCPClient({"warehouse": _warehouse_config(state)}) as client:
-        tools = client.get_tools()
-        model = ChatOpenAI(model=_model(), streaming=True).bind_tools(tools)
-        tool_by_name = {t.name: t for t in tools}
-        content, _ = await _agent_loop(model, messages, tool_by_name, config)
+    client = MultiServerMCPClient({"warehouse": _warehouse_config(state)})
+    tools = await client.get_tools()
+    model = ChatOpenAI(model=_model(), streaming=True).bind_tools(tools)
+    tool_by_name = {t.name: t for t in tools}
+    content, _ = await _agent_loop(model, messages, tool_by_name, config)
 
     return {"schema_summary": content}
 
@@ -183,11 +183,11 @@ async def sql_writer_node(state: AnalysisState, config: RunnableConfig) -> dict:
         "warehouse": _warehouse_config(state),
         "governance": _governance_config(),
     }
-    async with MultiServerMCPClient(server_config) as client:
-        tools = client.get_tools()
-        model = ChatOpenAI(model=_model(), streaming=True).bind_tools(tools)
-        tool_by_name = {t.name: t for t in tools}
-        content, _ = await _agent_loop(model, messages, tool_by_name, config)
+    client = MultiServerMCPClient(server_config)
+    tools = await client.get_tools()
+    model = ChatOpenAI(model=_model(), streaming=True).bind_tools(tools)
+    tool_by_name = {t.name: t for t in tools}
+    content, _ = await _agent_loop(model, messages, tool_by_name, config)
 
     return {"sql": _extract_sql(content)}
 
@@ -201,22 +201,22 @@ async def governance_check_node(state: AnalysisState, config: RunnableConfig) ->
     sql = state.get("sql", "")
     datasource_id = state.get("datasource_id") or "default"
 
-    async with MultiServerMCPClient({"governance": _governance_config()}) as client:
-        tools = client.get_tools()
-        lint_tool = next((t for t in tools if t.name == "lint_sql"), None)
+    client = MultiServerMCPClient({"governance": _governance_config()})
+    tools = await client.get_tools()
+    lint_tool = next((t for t in tools if t.name == "lint_sql"), None)
 
-        if lint_tool is None:
-            lint_result: dict = {"passes": True, "warnings": [], "errors": []}
-        else:
-            raw = await lint_tool.ainvoke(
-                {"sql": sql, "datasource_id": datasource_id},
-                config=config,
-            )
-            raw_str = raw if isinstance(raw, str) else getattr(raw, "content", str(raw))
-            try:
-                lint_result = json.loads(raw_str)
-            except (json.JSONDecodeError, TypeError):
-                lint_result = {"passes": True, "warnings": [], "errors": []}
+    if lint_tool is None:
+        lint_result: dict = {"passes": True, "warnings": [], "errors": []}
+    else:
+        raw = await lint_tool.ainvoke(
+            {"sql": sql, "datasource_id": datasource_id},
+            config=config,
+        )
+        raw_str = raw if isinstance(raw, str) else getattr(raw, "content", str(raw))
+        try:
+            lint_result = json.loads(raw_str)
+        except (json.JSONDecodeError, TypeError):
+            lint_result = {"passes": True, "warnings": [], "errors": []}
 
     revision_count = state.get("lint_revision_count", 0)
     if lint_result.get("errors"):
@@ -249,12 +249,12 @@ async def analyst_node(state: AnalysisState, config: RunnableConfig) -> dict:
     ]
 
     server_config = {"warehouse": _warehouse_config(state)}
-    async with MultiServerMCPClient(server_config) as client:
-        mcp_tools = client.get_tools()
-        all_tools = mcp_tools + [run_python_code_tool]
-        model = ChatOpenAI(model=_model(), streaming=True).bind_tools(all_tools)
-        tool_by_name = {t.name: t for t in all_tools}
-        content, chart_path = await _agent_loop(model, messages, tool_by_name, config)
+    client = MultiServerMCPClient(server_config)
+    mcp_tools = await client.get_tools()
+    all_tools = mcp_tools + [run_python_code_tool]
+    model = ChatOpenAI(model=_model(), streaming=True).bind_tools(all_tools)
+    tool_by_name = {t.name: t for t in all_tools}
+    content, chart_path = await _agent_loop(model, messages, tool_by_name, config)
 
     return {
         "insights": content,

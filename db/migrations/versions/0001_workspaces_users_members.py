@@ -53,7 +53,7 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("role", sa.Enum("admin", "analyst", "viewer", name="member_role"), nullable=False),
+        sa.Column("role", postgresql.ENUM("admin", "analyst", "viewer", name="member_role", create_type=False), nullable=False),
         sa.UniqueConstraint("workspace_id", "user_id", name="uq_workspace_member"),
     )
 

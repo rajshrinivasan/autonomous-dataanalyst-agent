@@ -57,8 +57,12 @@ def _execute_python_code(code: str) -> str:
     try:
         sock = container.attach_socket(params={"stdin": 1, "stream": 1})
         container.start()
-        sock._sock.sendall(envelope.encode())
-        sock._sock.shutdown(socket.SHUT_WR)
+        data = envelope.encode()
+        # SocketIO (Linux/Mac) wraps the real socket in ._sock;
+        # NpipeSocket (Windows Docker Desktop) IS the socket — use it directly.
+        raw = getattr(sock, "_sock", sock)
+        raw.sendall(data)
+        raw.shutdown(socket.SHUT_WR)
         sock.close()
         container.wait(timeout=30)
         output = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace").strip()

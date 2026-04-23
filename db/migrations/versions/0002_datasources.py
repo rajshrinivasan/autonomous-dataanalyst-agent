@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column(
             "type",
-            sa.Enum("sqlite", "postgres", "bigquery", "snowflake", name="datasource_type"),
+            postgresql.ENUM("sqlite", "postgres", "bigquery", "snowflake", name="datasource_type", create_type=False),
             nullable=False,
         ),
         sa.Column("connection_secret_ref", sa.String(255), nullable=False),

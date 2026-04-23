@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,8 +33,6 @@ from auth.dependencies import RequireAnalyst
 from db.models import DataSource
 from db.session import get_db_session
 from orchestration import run_analysis
-
-load_dotenv()
 
 CHARTS_DIR = Path(os.getenv("CHARTS_DIR", "output/charts"))
 STATIC_DIR = Path(__file__).parent / "static"

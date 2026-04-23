@@ -20,7 +20,12 @@ _JWKS_URL = os.getenv("JWT_JWKS_URL", "")
 _AUDIENCE = os.getenv("JWT_AUDIENCE", "")
 _ALGORITHM = "RS256"
 
-_bearer = HTTPBearer()
+# When DEV_AUTH_BYPASS=true, skip JWT validation and return a fixed dev identity.
+# Safe only for local development — never set this in production.
+_DEV_BYPASS = os.getenv("DEV_AUTH_BYPASS", "").lower() in ("1", "true", "yes")
+_DEV_WORKSPACE_ID = os.getenv("DEV_WORKSPACE_ID", "11111111-1111-1111-1111-111111111111")
+
+_bearer = HTTPBearer(auto_error=not _DEV_BYPASS)
 
 
 class TokenData(BaseModel):
@@ -52,8 +57,18 @@ def _pick_key(jwks: dict, kid: str | None) -> dict:
 
 
 async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> TokenData:
+    if _DEV_BYPASS:
+        return TokenData(sub="dev-user", workspace_id=_DEV_WORKSPACE_ID, role="analyst")
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     token = credentials.credentials
     exc_401 = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
