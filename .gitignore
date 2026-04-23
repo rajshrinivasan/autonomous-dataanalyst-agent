@@ -12,6 +12,7 @@ __pycache__/
 
 # Generated outputs
 output/**/*.png
+output/**/*.json
 
 # Generated database (recreate with: python data/seed_db.py)
 data/sample.db
