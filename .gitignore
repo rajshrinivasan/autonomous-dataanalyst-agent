@@ -35,3 +35,4 @@ exercises/
 
 # Eval result files (gitignored; add --save-results flag to persist)
 evals/results/*.json
+server.err

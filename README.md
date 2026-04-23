@@ -2,16 +2,17 @@
 
 Ask a business question in plain English. A team of AI agents queries a database, generates a chart, and writes a structured report — all streamed live to a web UI.
 
-**Stack:** OpenAI `gpt-4o-mini` · LangGraph · LangChain MCP Adapters · FastMCP · FastAPI · Server-Sent Events · Docker · PostgreSQL
+**Stack:** OpenAI `gpt-4o-mini` · LangGraph · LangChain MCP Adapters · FastMCP · FastAPI · Server-Sent Events · Docker · PostgreSQL · JWT/RS256
 
 ---
 
 ## What it does
 
 1. You type a question: *"What are the top 5 product categories by total revenue?"*
-2. A **LangGraph pipeline** routes the question through four specialist nodes in sequence.
-3. Each node's progress streams live to the browser as it happens.
-4. A written report and a chart appear in the right panel when analysis is complete.
+2. A **LangGraph StateGraph** routes the question through five specialist nodes in sequence.
+3. A **governance check** validates and lints the generated SQL before execution, looping back to the SQL writer if needed.
+4. Each node's progress streams live to the browser as it happens.
+5. A chart (generated in a Docker sandbox) and a written report appear when analysis is complete.
 
 ---
 
@@ -19,48 +20,60 @@ Ask a business question in plain English. A team of AI agents queries a database
 
 ```
 Browser
-  │  POST /analyze  (question)
+  │  POST /analyze  (question + auth JWT)
   │  ← SSE stream of events
   ▼
-┌─────────────────────────────────────────────────────────┐
-│  FastAPI  (app.py)                                       │
-│  GET /              → static/index.html                 │
-│  POST /analyze      → StreamingResponse (SSE)           │
-│  GET /charts/       → serve PNG files                   │
-│  POST|GET|DELETE /datasources → connector registry      │
-└────────────────────────┬────────────────────────────────┘
-                         │  async generator
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│  orchestration.py  —  run_analysis()                    │
-│  Drives workflow/graph.py via astream_events()          │
-└────────────────────────┬────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│  LangGraph StateGraph  (workflow/)                       │
-│                                                          │
-│  data_explorer ──► sql_writer ──► governance_check      │
-│                                        │                 │
-│                          errors ───────┘ (retry ≤3x)    │
-│                          clean  ──────► analyst          │
-│                                             │            │
-│                                          writer ──► END  │
-└──────┬───────────────────┬────────────────┬─────────────┘
-       │ MCP (stdio)       │ MCP (stdio)    │ function tool
-       ▼                   ▼                ▼
-┌────────────────┐ ┌───────────────┐ ┌─────────────────────┐
-│ warehouse_     │ │ governance_   │ │ tools.py             │
-│ server.py      │ │ server.py     │ │ run_python_code()    │
-│                │ │               │ │ — exec matplotlib    │
-│ list_tables()  │ │ lint_sql()    │ │   code in Docker     │
-│ get_schema()   │ │ estimate_     │ │ — sandbox: network   │
-│ run_query()    │ │   cost()      │ │   disabled, read-    │
-│                │ │ redact_pii()  │ │   only FS, 512 MB    │
-│ multi-dialect: │ │               │ └─────────────────────┘
-│ SQLite/PG/BQ/  │ └───────────────┘
-│ Snowflake      │
-└────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  FastAPI  (app.py)                                               │
+│  GET  /                  → static/index.html                    │
+│  POST /analyze           → StreamingResponse (SSE)              │
+│  GET  /charts/{file}     → serve PNG files                      │
+│  POST|GET|DELETE /datasources → connector registry (CRUD)       │
+│  GET  /health            → healthcheck                          │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │  JWT (RS256) via auth/dependencies.py
+                           │  DEV_AUTH_BYPASS=true skips in dev
+                           │  async generator
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  orchestration.py  —  run_analysis(question, workspace, ds)     │
+│  Drives workflow/graph.py → astream_events()                    │
+│  → workflow/sse_adapter.py → SSE event dicts                    │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  LangGraph StateGraph  (workflow/)                               │
+│                                                                  │
+│  data_explorer ──► sql_writer ──► governance_check              │
+│                                        │                         │
+│                          lint errors ──┘ (retry ≤3×)            │
+│                          lint passes ──► analyst                 │
+│                                              │                   │
+│                                           writer ──► END         │
+│                                                                  │
+│  State: AnalysisState TypedDict (workflow/state.py)             │
+│  Checkpointer: AsyncPostgresSaver (or MemorySaver fallback)     │
+└──────┬─────────────────────┬──────────────────┬─────────────────┘
+       │ MCP stdio           │ MCP stdio        │ function tool
+       ▼                     ▼                  ▼
+┌──────────────────┐  ┌──────────────────┐  ┌───────────────────────┐
+│ warehouse_       │  │ governance_      │  │ tools.py              │
+│ server.py        │  │ server.py        │  │ run_python_code()     │
+│                  │  │                  │  │ — exec matplotlib     │
+│ list_tables()    │  │ lint_sql()       │  │   in Docker sandbox   │
+│ get_schema()     │  │ estimate_cost()  │  │ — network disabled    │
+│ run_query()      │  │ redact_pii()     │  │ — read-only FS        │
+│                  │  │                  │  │ — 512 MB / 30 s       │
+│ SQLite / PG /    │  └──────────────────┘  └───────────────────────┘
+│ BigQuery /       │
+│ Snowflake        │         ┌──────────────────────────────────┐
+└──────────────────┘         │  PostgreSQL  (optional)          │
+                             │  • Workspace / User / DataSource │
+                             │  • LangGraph checkpoints         │
+                             │  • Row-level security (RLS)      │
+                             │  • Alembic migrations            │
+                             └──────────────────────────────────┘
 ```
 
 ---
@@ -70,25 +83,27 @@ Browser
 The orchestration is a `StateGraph` compiled with a Postgres (or in-memory) checkpointer. All state flows through a single `AnalysisState` TypedDict; each node returns only the keys it updates.
 
 ```
-data_explorer_node   Calls list_tables() + get_schema() via MCP.
-                     Returns: schema_summary
+data_explorer_node     Calls list_tables() + get_schema() via warehouse MCP.
+                       Returns: schema_summary
 
-sql_writer_node      Writes a SELECT query using the schema.
-                     Has access to both warehouse and governance MCP servers.
-                     Returns: sql
+sql_writer_node        Writes a SELECT query from the schema.
+                       Access to warehouse + governance MCP servers.
+                       Returns: sql
 
 governance_check_node  Calls lint_sql() directly (no LLM).
+                       DML/DDL → error. SELECT * → warning. Missing LIMIT → warning.
                        Errors → loop back to sql_writer (max 3 retries).
                        Returns: lint_result, lint_revision_count
 
-analyst_node         Calls run_query() + run_python_code() (Docker sandbox).
-                     Returns: insights, chart_path
+analyst_node           Calls run_query() + run_python_code() (Docker sandbox).
+                       Extracts insights from query results.
+                       Returns: query_results, chart_path, insights
 
-writer_node          Produces the final markdown report.
-                     Returns: report
+writer_node            Produces the final markdown report (≤ 450 words).
+                       Returns: report
 ```
 
-The SSE adapter (`workflow/sse_adapter.py`) maps `astream_events()` callbacks to the same event format the frontend already understands — `static/index.html` is unchanged.
+The SSE adapter (`workflow/sse_adapter.py`) maps `astream_events()` callbacks onto the event format the frontend already understands — `static/index.html` is unchanged.
 
 ---
 
@@ -98,7 +113,7 @@ The SSE adapter (`workflow/sse_adapter.py`) maps `astream_events()` callbacks to
 |---|---|---|---|
 | **data_explorer** | Maps schema and relationships | warehouse | `list_tables()`, `get_schema()` |
 | **sql_writer** | Writes correct SELECT queries | warehouse + governance | `lint_sql()`, `estimate_cost()` |
-| **governance_check** | Enforces SQL safety rules | governance | `lint_sql()` (direct call) |
+| **governance_check** | Enforces SQL safety rules (no LLM) | governance | `lint_sql()` (direct call) |
 | **analyst** | Runs queries, generates charts | warehouse | `run_query()`, `run_python_code()` |
 | **writer** | Produces structured narrative | — | — |
 
@@ -118,7 +133,7 @@ Launched as a stdio subprocess per analysis session. Resolves the datasource fro
 | `get_schema(table_name)` | Columns, types, PKs, FKs, row count |
 | `run_query(sql)` | SELECT-only; capped at datasource `row_limit` |
 
-Supported engines: **SQLite**, **PostgreSQL**, **BigQuery**, **Snowflake**. Falls back to the original `mcp_server.py` (hardcoded SQLite) when no `datasource_id` is provided.
+Supported engines: **SQLite**, **PostgreSQL**, **BigQuery**, **Snowflake**. Falls back to `mcp_server.py` (legacy SQLite) when no `datasource_id` is provided.
 
 ### governance_server.py
 
@@ -128,7 +143,7 @@ Stateless FastMCP server started alongside the warehouse server.
 |---|---|
 | `lint_sql(sql, datasource_id)` | Blocks DML/DDL; warns on `SELECT *`, missing `LIMIT`, unfiltered fact tables |
 | `estimate_cost(sql, datasource_id)` | SQLite: `EXPLAIN QUERY PLAN`; Postgres: `EXPLAIN (FORMAT JSON)`; BigQuery: dry-run bytes |
-| `redact_pii(rows, catalog)` | Masks PII columns in result rows (placeholder for M2 catalog integration) |
+| `redact_pii(rows, catalog)` | Masks PII columns in result rows |
 
 ---
 
@@ -139,13 +154,60 @@ Stateless FastMCP server started alongside the warehouse server.
 - **Network disabled** — no outbound connections
 - **Read-only filesystem** — only `/tmp` is writable (mounted from `output/charts/`)
 - **512 MB RAM · 1 CPU · 30 s timeout**
-- Blocked globals: `os.system`, `subprocess`, `socket`, `importlib`, `open`
+- Blocked globals: `os`, `sys`, `subprocess`, `socket`, `importlib`, `open`
 
 Build the image once:
 
 ```bash
 docker build -t ada-sandbox:latest sandbox/
 ```
+
+---
+
+## Authentication & Multi-Tenancy
+
+Auth is handled by `auth/dependencies.py` using RS256 JWT verification (Clerk-compatible JWKS endpoint).
+
+**Token claims used:**
+- `sub` — user ID
+- `workspace_id` — multi-tenant workspace scope
+- `role` — `admin | analyst | viewer` (defaults to `analyst`)
+
+Set `DEV_AUTH_BYPASS=true` in `.env` to skip token validation in local development.
+
+Workspace, User, DataSource, and WorkspaceMember ORM models live in `db/models.py` with Alembic-managed Postgres migrations that include row-level security (RLS) policies.
+
+---
+
+## Testing
+
+The project uses a 4-layer testing pyramid:
+
+### Layer 1 — Unit Tests (`tests/`)
+FastAPI endpoints, JWT auth, governance rules, MCP tools, sandbox execution, SSE event mapping, state transitions.
+
+### Layer 2 — Integration Tests (`tests/`)
+End-to-end LangGraph graph execution with mocked OpenAI responses; Playwright browser tests in `tests/e2e/`.
+
+### Layer 3 — Deterministic Invariants (`tests/test_invariants.py`)
+Three behavioral guarantees verified **without any LLM call**:
+- **I1 — DML/DDL Rejection**: `run_query()` always rejects non-SELECT statements
+- **I2 — Row Limit Enforcement**: queries are always capped at `datasource.row_limit`
+- **I3 — Schema Consistency**: `data_explorer` output matches actual DB schema
+
+### Layer 4 — LLM-as-Judge Evals (`evals/`)
+Golden test cases with two-layer scoring:
+- **Deterministic** (free, always runs): SQL structural checks, execution, data properties, chart presence, report section checks
+- **LLM judge** (optional, paid): semantic SQL quality, insight groundedness, report clarity
+
+Eval results saved to `evals/results/<timestamp>.json`. An optional bootstrap optimizer (`evals/optimizer.py`) tunes few-shot examples from golden cases.
+
+### CI/CD (`.github/workflows/`)
+
+| Workflow | Trigger | What runs |
+|---|---|---|
+| `tests.yml` | push / PR to main | Unit + invariant tests on Python 3.11 & 3.12 |
+| `evals.yml` | nightly cron | Full golden case suite with LLM judge; optional `--optimize` |
 
 ---
 
@@ -157,7 +219,7 @@ Every event from `POST /analyze` is a JSON line: `data: {...}\n\n`
 |---|---|---|
 | `agent_switch` | `agent` | Active agent highlighted in feed |
 | `tool_call` | `tool` | Tool card appears with spinner |
-| `tool_result` | `output` (first 400 chars) | Spinner removed, output preview shown |
+| `tool_result` | `output` (first 400 chars) | Spinner removed, preview shown |
 | `text_delta` | `delta` | Text streams character-by-character |
 | `chart` | `path`, `url` | Thumbnail in feed; full image in report panel |
 | `done` | `output` | Markdown report rendered in right panel |
@@ -169,57 +231,81 @@ Every event from `POST /analyze` is a JSON line: `data: {...}\n\n`
 
 ```
 Autonomous Data Analyst/
-├── app.py                  FastAPI server — SSE, chart serving, datasource CRUD
-├── orchestration.py        run_analysis() generator — drives LangGraph graph
-├── mcp_server.py           Legacy FastMCP SQLite server (fallback, no auth)
-├── tools.py                run_python_code() — Docker sandbox execution
-├── run.py                  Launcher (auto-seeds DB, starts uvicorn)
+├── app.py                     FastAPI server — SSE, chart serving, datasource CRUD
+├── orchestration.py           run_analysis() generator — drives LangGraph graph
+├── mcp_server.py              Legacy FastMCP SQLite server (fallback, no auth)
+├── tools.py                   run_python_code() — Docker sandbox execution
+├── run.py                     Launcher (auto-seeds DB, starts uvicorn)
 │
-├── workflow/               LangGraph pipeline
-│   ├── state.py            AnalysisState TypedDict
-│   ├── nodes.py            Five async node functions
-│   ├── graph.py            StateGraph + conditional governance edge
-│   ├── checkpointer.py     AsyncPostgresSaver / MemorySaver factory
-│   └── sse_adapter.py      astream_events() → SSE event dicts
+├── workflow/                  LangGraph pipeline
+│   ├── state.py               AnalysisState TypedDict
+│   ├── nodes.py               Five async node functions
+│   ├── graph.py               StateGraph + conditional governance edge
+│   ├── checkpointer.py        AsyncPostgresSaver / MemorySaver factory
+│   └── sse_adapter.py         astream_events() → SSE event dicts
 │
 ├── mcp_servers/
-│   ├── warehouse_server.py Multi-engine MCP (SQLite / PG / BQ / Snowflake)
-│   └── governance_server.py lint_sql, estimate_cost, redact_pii
+│   ├── warehouse_server.py    Multi-engine MCP (SQLite / PG / BigQuery / Snowflake)
+│   └── governance_server.py   lint_sql, estimate_cost, redact_pii
 │
-├── instructions/
-│   ├── manager.md          (legacy — kept for reference)
-│   ├── data_explorer.md    Schema discovery instructions
-│   ├── sql_writer.md       SQL writing rules (SQLite-specific)
-│   ├── analyst.md          Query execution + matplotlib chart rules
-│   └── writer.md           Report structure and style guide
+├── instructions/              Agent system prompts (editable at runtime)
+│   ├── data_explorer.md
+│   ├── sql_writer.md
+│   ├── analyst.md
+│   ├── writer.md
+│   └── manager.md             (legacy reference)
 │
 ├── auth/
-│   └── dependencies.py     JWT (RS256) verification, RequireAnalyst dependency
+│   └── dependencies.py        JWT (RS256) verification, RequireAnalyst dependency
 │
 ├── db/
-│   ├── models.py           SQLAlchemy ORM — Workspace, User, DataSource
-│   ├── session.py          Async session factory with RLS context
-│   └── migrations/         Alembic migrations (RLS policies included)
+│   ├── models.py              SQLAlchemy ORM — Workspace, User, DataSource
+│   ├── session.py             Async session factory with RLS context
+│   └── migrations/            Alembic migrations (RLS policies included)
 │
 ├── sandbox/
-│   ├── Dockerfile          Locked-down Python image for chart execution
-│   └── runner.py           JSON envelope stdin → exec() → CHART_SAVED
+│   ├── Dockerfile             Locked-down Python 3.11 image
+│   └── runner.py              JSON envelope stdin → exec() → CHART_SAVED
+│
+├── evals/                     LLM-as-judge evaluation suite
+│   ├── test_evals.py          Pytest runner
+│   ├── runner.py              EvalResult runner (executes golden cases)
+│   ├── scorer.py              Two-layer scoring (deterministic + LLM)
+│   ├── optimizer.py           Bootstrap optimizer for few-shot tuning
+│   ├── judge_prompts.py       LLM judge prompt templates
+│   └── cases/golden_cases.json  ~6 end-to-end test cases with expectations
+│
+├── tests/                     Unit, integration, invariant tests
+│   ├── test_invariants.py     3 behavioral guarantees (no LLM required)
+│   ├── test_app.py            FastAPI endpoints
+│   ├── test_auth.py           JWT verification
+│   ├── test_governance.py     SQL lint / cost estimation
+│   ├── test_mcp_server.py     MCP tools
+│   ├── test_sandbox.py        Docker execution
+│   ├── test_sse_adapter.py    Event stream mapping
+│   ├── test_workflow_state.py State transitions
+│   ├── test_workflow_integration.py  End-to-end workflow
+│   └── e2e/test_playwright.py        Browser-based E2E
 │
 ├── data/
-│   ├── seed_db.py          Creates sample.db
-│   └── sample.db           8 categories, 46 products, 300 customers,
-│                           1200 orders, 3551 line items
+│   ├── seed_db.py             Creates sample.db
+│   └── sample.db              8 categories, 46 products, 300 customers,
+│                              1 200 orders, 3 551 line items
 │
 ├── static/
-│   └── index.html          Single-page web UI (vanilla JS + marked.js)
+│   └── index.html             Single-page web UI (vanilla JS + marked.js)
 │
 ├── output/
-│   └── charts/             Generated PNG charts served at /charts/<file>
+│   └── charts/                Generated PNG charts served at /charts/<file>
 │
-├── docker-compose.dev.yml  Postgres 16 + pgAdmin for local dev
-├── Makefile                sandbox-build, dev-up, migrate targets
-├── .env.example            Environment variable template
-└── requirements.txt        Python dependencies
+├── .github/workflows/
+│   ├── tests.yml              CI: unit + invariant tests
+│   └── evals.yml              Nightly: LLM-as-judge evals
+│
+├── docker-compose.dev.yml     Postgres 16 + pgAdmin for local dev
+├── Makefile                   sandbox-build, dev-up, migrate targets
+├── .env.example               Environment variable template
+└── requirements.txt           Python dependencies
 ```
 
 ---
@@ -241,9 +327,9 @@ pip install -r requirements.txt
 # 4. Configure environment
 cp .env.example .env
 # Required: OPENAI_API_KEY=sk-...
-# Optional: POSTGRES_DSN, JWT_JWKS_URL, JWT_AUDIENCE, DOCKER_SANDBOX_IMAGE
+# Optional: POSTGRES_DSN, JWT_JWKS_URL, JWT_AUDIENCE
 
-# 5. Run database migrations (only needed with Postgres)
+# 5. Run database migrations (only with Postgres)
 alembic upgrade head
 
 # 6. Seed the SQLite sample database (one-time)
@@ -282,11 +368,13 @@ python orchestration.py "Which month had the highest sales in 2024?"
 |---|---|---|
 | `OPENAI_API_KEY` | — | Required. OpenAI API key |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Model for all nodes. Use `gpt-4o` for higher quality |
-| `POSTGRES_DSN` | — | Async DSN (`postgresql+asyncpg://...`). Enables LangGraph checkpointing and auth |
-| `POSTGRES_DSN_SYNC` | — | Sync DSN (`postgresql://...`). Used by warehouse_server and Alembic |
+| `POSTGRES_DSN` | — | Async DSN (`postgresql+asyncpg://...`). Enables checkpointing + auth |
+| `POSTGRES_DSN_SYNC` | — | Sync DSN (`postgresql://...`). Used by warehouse/governance servers and Alembic |
 | `JWT_JWKS_URL` | — | JWKS endpoint for RS256 JWT verification (e.g. Clerk) |
 | `JWT_AUDIENCE` | — | Expected `aud` claim in JWTs |
-| `DOCKER_SANDBOX_IMAGE` | `ada-sandbox:latest` | Docker image used for chart execution |
+| `DEV_AUTH_BYPASS` | `false` | Skip JWT validation in development |
+| `DEV_WORKSPACE_ID` | — | Fixed workspace UUID used when auth bypass is on |
+| `DOCKER_SANDBOX_IMAGE` | `ada-sandbox:latest` | Docker image for chart execution |
 | `SECRET_SAMPLE_DB` | `sqlite:///./data/sample.db` | Connection string for the sample datasource |
 | `HOST` | `127.0.0.1` | Server bind address |
 | `PORT` | `8000` | Server port |
@@ -309,7 +397,7 @@ python orchestration.py "Which month had the highest sales in 2024?"
 
 | Package | Purpose |
 |---|---|
-| `langgraph` | StateGraph orchestration with checkpointing |
+| `langgraph` | StateGraph orchestration with Postgres checkpointing |
 | `langchain-openai` | `ChatOpenAI` model wrapper |
 | `langchain-mcp-adapters` | `MultiServerMCPClient` — bridges MCP tools into LangChain |
 | `langchain-core` | Messages, tools, runnable config |
@@ -318,8 +406,11 @@ python orchestration.py "Which month had the highest sales in 2024?"
 | `fastapi` + `uvicorn` | Web server and ASGI runner |
 | `matplotlib` + `pandas` | Chart generation inside Docker sandbox |
 | `sqlalchemy[asyncio]` + `asyncpg` | Async ORM and Postgres driver |
-| `alembic` | Database migrations |
-| `python-jose[cryptography]` | JWT verification |
+| `alembic` | Database migrations with RLS policies |
+| `python-jose[cryptography]` | JWT RS256 verification |
 | `docker` | docker-py SDK for sandbox container management |
 | `psycopg2-binary` | Sync Postgres driver for warehouse / governance servers |
+| `pytest` + `pytest-asyncio` | Test runner |
+| `testcontainers[postgres]` | Ephemeral Postgres containers for integration tests |
+| `playwright` | Browser-based E2E tests |
 | `python-dotenv` | `.env` loading |
