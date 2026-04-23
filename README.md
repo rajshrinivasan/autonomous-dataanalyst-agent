@@ -179,6 +179,104 @@ Workspace, User, DataSource, and WorkspaceMember ORM models live in `db/models.p
 
 ---
 
+## Production Auth Setup (Clerk + real user)
+
+This is a one-time setup to test or run the app with `DEV_AUTH_BYPASS=false` and a real Clerk identity.
+
+### 1 — Disable the dev bypass
+
+In `.env`:
+```
+DEV_AUTH_BYPASS=false
+CLERK_PUBLISHABLE_KEY=pk_test_...       # from Clerk Dashboard → API Keys
+CLERK_JWT_TEMPLATE=ada                  # name you give the template in step 3
+JWT_JWKS_URL=https://<your-clerk-domain>/.well-known/jwks.json
+JWT_AUDIENCE=<your-clerk-publishable-key>
+```
+
+### 2 — Start Postgres and run migrations
+
+```bash
+docker-compose -f docker-compose.dev.yml up -d
+alembic upgrade head
+```
+
+### 3 — Configure a Clerk JWT template
+
+In [Clerk Dashboard](https://dashboard.clerk.com) → **Configure → JWT Templates** → **New template**:
+
+- Name it `ada` (must match `CLERK_JWT_TEMPLATE`)
+- Add these custom claims:
+
+```json
+{
+  "workspace_id": "{{user.public_metadata.workspace_id}}",
+  "role": "{{user.public_metadata.role}}"
+}
+```
+
+### 4 — Create the workspace and user in Postgres
+
+Connect to Postgres (`psql postgresql://analyst:analyst_dev@localhost:5432/analyst_db` or pgAdmin at `http://localhost:5050`) and run:
+
+```sql
+-- Pick a UUID for the workspace and use it in step 5 too
+INSERT INTO workspaces (id, name, created_at)
+VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'My Workspace', NOW());
+
+-- clerk_user_id comes from Clerk Dashboard → Users → select user
+INSERT INTO users (id, clerk_user_id, email, created_at)
+VALUES (gen_random_uuid(), 'user_2xxxxxxxxxxxx', 'you@example.com', NOW());
+
+-- Add the user as admin so they can manage datasources
+INSERT INTO workspace_members (id, workspace_id, user_id, role)
+SELECT gen_random_uuid(),
+       'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+       id,
+       'admin'
+FROM users WHERE clerk_user_id = 'user_2xxxxxxxxxxxx';
+```
+
+### 5 — Set public metadata on the Clerk user
+
+In Clerk Dashboard → **Users** → select the user → **Public metadata**:
+
+```json
+{
+  "workspace_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "role": "admin"
+}
+```
+
+This is what the JWT template reads to embed `workspace_id` and `role` into the token.
+
+### 6 — Login via the UI
+
+Start the app (`python run.py`), open `http://localhost:8000`.  
+The login screen shows the **Sign in with Clerk** button (dev section is hidden since `DEV_AUTH_BYPASS=false`).  
+Click it → Clerk modal opens → sign in → token is stored automatically → app loads.
+
+### 7 — Register a datasource
+
+As `admin`, the **Manage** button appears in the datasource bar:
+
+1. Click **Manage** → modal opens
+2. Fill in:
+   - **Name**: `Sample SQLite`
+   - **Type**: `sqlite`
+   - **Connection secret ref**: `SECRET_SAMPLE_DB` (matches the env var name in `.env`)
+3. Click **Add datasource**
+
+The datasource is stored in Postgres scoped to your workspace (enforced by RLS).
+
+### Notes
+
+- **Token expiry**: Clerk JWTs expire after ~1 hour. The frontend automatically refreshes via `Clerk.session.getToken()` on any 401 response. If refresh fails, the user is signed out cleanly.
+- **Analyst vs Viewer roles**: only `admin` and `analyst` can submit questions. `viewer` gets a read-only notice and the submit button is disabled.
+- **CLERK_JWT_TEMPLATE is optional**: if omitted, the default Clerk session token is used, but it won't contain `workspace_id` or `role` — the backend will return 403. Always set the template for production use.
+
+---
+
 ## Testing
 
 The project uses a 4-layer testing pyramid:

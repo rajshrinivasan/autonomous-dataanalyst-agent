@@ -49,6 +49,7 @@
     .dev-section p { font-size: 0.78rem; color: var(--muted); margin-bottom: 1rem; }
 
     .clerk-section { opacity: .5; }
+    .clerk-section.active { opacity: 1; }
     .clerk-section-label { font-size: 0.68rem; font-weight: 700; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 0.75rem; }
     .clerk-section p { font-size: 0.75rem; color: var(--muted); margin-top: 0.6rem; }
 
@@ -284,8 +285,8 @@
     <h1>Autonomous Data Analyst</h1>
     <p>Multi-agent SQL &amp; chart generation</p>
 
-    <!-- Dev bypass section -->
-    <div class="dev-section">
+    <!-- Dev bypass section (shown when DEV_AUTH_BYPASS=true) -->
+    <div class="dev-section hidden" id="devSection">
       <div class="dev-section-label">&#9654; Dev Mode</div>
       <p>DEV_AUTH_BYPASS is active — no credentials needed.</p>
       <button class="btn btn-primary btn-full" onclick="devLogin()" id="devLoginBtn">
@@ -293,15 +294,15 @@
       </button>
     </div>
 
-    <hr class="login-divider" />
+    <hr class="login-divider hidden" id="loginDivider" />
 
-    <!-- Production Clerk section (future) -->
-    <div class="clerk-section">
+    <!-- Production Clerk section (shown when CLERK_PUBLISHABLE_KEY is set) -->
+    <div class="clerk-section hidden" id="clerkSection">
       <div class="clerk-section-label">&#128274; Production</div>
-      <button class="btn btn-outline btn-full" disabled title="Configure JWT_JWKS_URL to enable">
+      <button class="btn btn-outline btn-full" id="clerkLoginBtn" onclick="clerkLogin()" disabled>
         Sign in with Clerk
       </button>
-      <p>Set JWT_JWKS_URL + JWT_AUDIENCE in .env to enable.</p>
+      <p>Set CLERK_PUBLISHABLE_KEY + CLERK_JWT_TEMPLATE in .env to enable.</p>
     </div>
   </div>
 </div>
@@ -411,6 +412,8 @@ const TOOL_AGENT = {
 let authToken   = localStorage.getItem('ada_token') || null;
 let currentUser = null;   // { sub, workspace_id, workspace_name, role, is_dev }
 let datasources = [];     // cached datasource list
+let appConfig   = {};     // { dev_bypass, clerk_publishable_key, clerk_jwt_template }
+let clerkLoaded = false;
 
 /* ── Analysis state ───────────────────────────────────────── */
 let pendingToolEl = null;
@@ -422,12 +425,20 @@ let deltaEl       = null;
    INIT
    ════════════════════════════════════════════════════════════ */
 async function init() {
-  const ok = await checkAuth();
-  if (ok) {
-    showApp();
-  } else {
-    showLogin();
+  try {
+    const r = await fetch('/config');
+    if (r.ok) appConfig = await r.json();
+  } catch (_) {}
+
+  // Try auto-login with a stored token before showing login screen
+  if (authToken) {
+    const ok = await checkAuth();
+    if (ok) { showApp(); return; }
+    authToken = null;
+    localStorage.removeItem('ada_token');
   }
+
+  showLogin();
 }
 
 async function checkAuth() {
@@ -438,6 +449,107 @@ async function checkAuth() {
     return true;
   } catch (_) {
     return false;
+  }
+}
+
+/* ── Login screen setup ───────────────────────────────────── */
+function renderLoginSections() {
+  const showDev   = !!appConfig.dev_bypass;
+  const showClerk = !!appConfig.clerk_publishable_key;
+
+  document.getElementById('devSection').classList.toggle('hidden', !showDev);
+  document.getElementById('loginDivider').classList.toggle('hidden', !showDev || !showClerk);
+  document.getElementById('clerkSection').classList.toggle('hidden', !showClerk);
+
+  if (showClerk) {
+    document.getElementById('clerkSection').classList.add('active');
+    document.getElementById('clerkLoginBtn').disabled = false;
+  }
+}
+
+/* ── Clerk production login ───────────────────────────────── */
+async function clerkLogin() {
+  const btn = document.getElementById('clerkLoginBtn');
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+
+  try {
+    await loadClerk(appConfig.clerk_publishable_key);
+
+    if (window.Clerk.user) {
+      await completeClerkLogin();
+      return;
+    }
+
+    btn.textContent = 'Signing in…';
+
+    let unsubscribe;
+    unsubscribe = window.Clerk.addListener(async ({ user }) => {
+      if (user) { unsubscribe(); await completeClerkLogin(); }
+    });
+
+    // Re-enable button when the Clerk modal is dismissed without signing in
+    const observer = new MutationObserver(() => {
+      if (!document.querySelector('.cl-rootBox') && !window.Clerk.user) {
+        btn.disabled = false;
+        btn.textContent = 'Sign in with Clerk';
+        if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    window.Clerk.openSignIn();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Sign in with Clerk';
+    toast('Clerk error: ' + e.message, true);
+  }
+}
+
+function loadClerk(publishableKey) {
+  if (clerkLoaded) return Promise.resolve();
+  // Decode the Clerk frontend API domain from the publishable key
+  const b64    = publishableKey.replace(/^pk_(test|live)_/, '');
+  const padded = b64 + '='.repeat((4 - b64.length % 4) % 4);
+  const domain = atob(padded).replace(/\$$/, '');
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.setAttribute('data-clerk-publishable-key', publishableKey);
+    s.src         = `https://${domain}/npm/@clerk/clerk-js@latest/dist/clerk.browser.js`;
+    s.crossOrigin = 'anonymous';
+    s.onload = async () => {
+      try { await window.Clerk.load(); clerkLoaded = true; resolve(); }
+      catch (e) { reject(e); }
+    };
+    s.onerror = () => reject(new Error('Failed to load Clerk.js'));
+    document.head.appendChild(s);
+  });
+}
+
+async function completeClerkLogin() {
+  try {
+    const opts  = appConfig.clerk_jwt_template ? { template: appConfig.clerk_jwt_template } : {};
+    const token = await window.Clerk.session.getToken(opts);
+    if (!token) throw new Error('No token returned from Clerk');
+
+    authToken = token;
+    localStorage.setItem('ada_token', token);
+
+    const ok = await checkAuth();
+    if (ok) {
+      showApp();
+    } else {
+      authToken = null;
+      localStorage.removeItem('ada_token');
+      toast('Auth failed — verify workspace_id claim is set in your JWT template.', true);
+      const btn = document.getElementById('clerkLoginBtn');
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign in with Clerk'; }
+    }
+  } catch (e) {
+    toast('Token error: ' + e.message, true);
+    const btn = document.getElementById('clerkLoginBtn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign in with Clerk'; }
   }
 }
 
@@ -457,11 +569,12 @@ async function devLogin() {
 }
 
 /* ── Sign out ─────────────────────────────────────────────── */
-function signOut() {
+async function signOut() {
   authToken = null;
   currentUser = null;
   datasources = [];
   localStorage.removeItem('ada_token');
+  if (clerkLoaded && window.Clerk?.user) await window.Clerk.signOut();
   showLogin();
   resetAnalysisState();
 }
@@ -470,6 +583,7 @@ function signOut() {
 function showLogin() {
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('app').classList.add('hidden');
+  renderLoginSections();
 }
 
 function showApp() {
@@ -840,11 +954,27 @@ function resetAnalysisState() {
   pendingToolEl = null; chartUrl = null; deltaBuffer = ''; deltaEl = null;
 }
 
-/* ── API fetch with auth header ───────────────────────────── */
-function apiFetch(url, options = {}) {
+/* ── API fetch with auth header + Clerk token refresh on 401 ─ */
+async function apiFetch(url, options = {}, _isRetry = false) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-  return fetch(url, { ...options, headers });
+  const resp = await fetch(url, { ...options, headers });
+
+  if (resp.status === 401 && !_isRetry && clerkLoaded && window.Clerk?.session) {
+    try {
+      const opts  = appConfig.clerk_jwt_template ? { template: appConfig.clerk_jwt_template } : {};
+      const fresh = await window.Clerk.session.getToken({ ...opts, skipCache: true });
+      if (fresh && fresh !== authToken) {
+        authToken = fresh;
+        localStorage.setItem('ada_token', fresh);
+        return apiFetch(url, options, true);
+      }
+    } catch (_) {}
+    await signOut();
+    toast('Session expired. Please sign in again.', true);
+  }
+
+  return resp;
 }
 
 /* ── Toast notification ───────────────────────────────────── */

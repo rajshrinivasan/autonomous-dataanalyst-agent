@@ -3,9 +3,11 @@ FastAPI + SSE web interface for the Autonomous Data Analyst.
 
 Endpoints
   GET  /                       Serve the web UI (static/index.html)
+  GET  /config                 Public client config (dev_bypass flag, Clerk publishable key)
   POST /analyze                Stream analysis events as Server-Sent Events
   GET  /charts/{file}          Serve generated chart images
   GET  /health                 Health check
+  GET  /me                     Return calling user's identity and workspace context
   POST /datasources            Create a datasource record
   GET  /datasources            List datasources for the current workspace
   DELETE /datasources/{id}     Delete a datasource record
@@ -216,6 +218,16 @@ async def get_me(user: RequireAnalyst):
         "workspace_name": workspace_name,
         "role": user.role,
         "is_dev": is_dev,
+    }
+
+
+@app.get("/config")
+async def get_config():
+    """Public client config — safe to expose, contains no secrets."""
+    return {
+        "dev_bypass": os.getenv("DEV_AUTH_BYPASS", "").lower() in ("1", "true", "yes"),
+        "clerk_publishable_key": os.getenv("CLERK_PUBLISHABLE_KEY", ""),
+        "clerk_jwt_template": os.getenv("CLERK_JWT_TEMPLATE", ""),
     }
 
 
