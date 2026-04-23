@@ -247,3 +247,50 @@ def test_delete_datasource_invalid_uuid(client_with_db):
     client, _ = client_with_db
     resp = client.delete("/datasources/not-a-valid-uuid")
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# GET /me
+# ---------------------------------------------------------------------------
+
+def test_me_returns_user_fields(client):
+    resp = client.get("/me")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sub"] == FAKE_TOKEN.sub
+    assert body["workspace_id"] == FAKE_TOKEN.workspace_id
+    assert body["role"] == FAKE_TOKEN.role
+    assert "workspace_name" in body
+    assert "is_dev" in body
+
+
+def test_me_workspace_name_is_string(client):
+    resp = client.get("/me")
+    assert resp.status_code == 200
+    assert isinstance(resp.json()["workspace_name"], str)
+    assert len(resp.json()["workspace_name"]) > 0
+
+
+def test_me_role_values(client):
+    for role in ("admin", "analyst", "viewer"):
+        app.dependency_overrides[get_current_user] = lambda r=role: TokenData(
+            sub="u", workspace_id=FAKE_WORKSPACE, role=r
+        )
+        resp = client.get("/me")
+        assert resp.status_code == 200
+        assert resp.json()["role"] == role
+    app.dependency_overrides[get_current_user] = lambda: FAKE_TOKEN
+
+
+def test_me_requires_auth(client):
+    import auth.dependencies as auth_dep
+    app.dependency_overrides.clear()
+    with patch.object(auth_dep, "_DEV_BYPASS", False):
+        resp = client.get("/me")
+    assert resp.status_code in (401, 403)
+    app.dependency_overrides[get_current_user] = lambda: FAKE_TOKEN
+
+
+def test_me_dev_mode_flag_is_bool(client):
+    resp = client.get("/me")
+    assert isinstance(resp.json()["is_dev"], bool)

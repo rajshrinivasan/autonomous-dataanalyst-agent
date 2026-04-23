@@ -205,6 +205,20 @@ async def delete_datasource(datasource_id: str, user: RequireAnalyst):
         await session.commit()
 
 
+@app.get("/me")
+async def get_me(user: RequireAnalyst):
+    """Return the calling user's identity and workspace context."""
+    is_dev = os.getenv("DEV_AUTH_BYPASS", "").lower() in ("1", "true", "yes")
+    workspace_name = "Dev Workspace" if is_dev else f"Workspace {user.workspace_id[:8]}"
+    return {
+        "sub": user.sub,
+        "workspace_id": user.workspace_id,
+        "workspace_name": workspace_name,
+        "role": user.role,
+        "is_dev": is_dev,
+    }
+
+
 @app.get("/health")
 async def health():
     db_path = Path(os.getenv("DB_PATH", "data/sample.db"))
