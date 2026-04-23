@@ -46,6 +46,12 @@ def pytest_addoption(parser):
         default=False,
         help="Save eval result JSON files to evals/results/",
     )
+    parser.addoption(
+        "--optimize",
+        action="store_true",
+        default=False,
+        help="After eval run, trigger the bootstrap optimizer on evals/results/",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -56,3 +62,19 @@ def use_llm_judge(request) -> bool:
 @pytest.fixture(scope="session")
 def save_results(request) -> bool:
     return request.config.getoption("--save-results", default=False)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """After the eval session, run the bootstrap optimizer when --optimize is set."""
+    if not session.config.getoption("--optimize", default=False):
+        return
+    try:
+        from evals.optimizer import run_optimizer
+        modified = run_optimizer()
+        if modified:
+            print(f"\n[optimizer] Updated instruction files: {modified}")
+            print("[optimizer] Re-run evals to measure improvement.")
+        else:
+            print("\n[optimizer] No instruction files needed updating.")
+    except Exception as exc:
+        print(f"\n[optimizer] Optimizer failed: {exc}")

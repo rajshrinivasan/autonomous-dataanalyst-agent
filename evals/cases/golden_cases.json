@@ -267,6 +267,140 @@
         "must_mention_numbers": true,
         "max_words": 500
       }
+    },
+    {
+      "id": "average_order_value",
+      "description": "Average order value — tests AVG() and multi-table arithmetic",
+      "question": "What is the average order value across all completed orders?",
+      "tags": ["arithmetic", "average", "aggregation"],
+      "sql_checks": {
+        "must_contain_tables": ["orders", "order_items"],
+        "must_use_aggregation": true,
+        "must_use_join": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "row_count_min": 1,
+        "any_numeric_gt": 50.0
+      },
+      "analyst_checks": {
+        "chart_required": false,
+        "min_insights": 2,
+        "insights_must_mention": ["%"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 400
+      }
+    },
+    {
+      "id": "cancellation_rate_by_month",
+      "description": "Cancellation rate per month — tests strftime + WHERE status filter",
+      "question": "What is the monthly cancellation rate for orders over the past two years?",
+      "tags": ["time_series", "filter", "cancellation"],
+      "sql_checks": {
+        "must_contain_tables": ["orders"],
+        "must_use_strftime": true,
+        "must_use_aggregation": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["month"],
+        "row_count_min": 6,
+        "column_pattern": {"month": "^\\d{4}-\\d{2}$"}
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3,
+        "insights_must_mention": ["%"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 450
+      }
+    },
+    {
+      "id": "top_cities_by_customers",
+      "description": "Top cities by customer count — COUNT without revenue join",
+      "question": "Which cities have the most customers registered on our platform?",
+      "tags": ["geography", "customers", "ranking"],
+      "sql_checks": {
+        "must_contain_tables": ["customers"],
+        "must_contain_columns": ["city"],
+        "must_use_aggregation": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["city"],
+        "row_count_min": 5
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 2
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 400
+      }
+    },
+    {
+      "id": "product_price_distribution",
+      "description": "Product count in price buckets — tests CASE WHEN range bucketing",
+      "question": "How many products fall into each price range: under $25, $25-$75, and over $75?",
+      "tags": ["distribution", "bucketing", "products"],
+      "sql_checks": {
+        "must_contain_tables": ["products"],
+        "must_use_aggregation": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "row_count_exact": 3,
+        "any_numeric_gt": 0.0
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 2,
+        "insights_must_mention": ["$25", "$75"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 400
+      }
+    },
+    {
+      "id": "new_customers_per_month",
+      "description": "New customer acquisition per month — strftime on customers.created_at",
+      "question": "How many new customers did we acquire each month over the past two years?",
+      "tags": ["customers", "time_series", "acquisition"],
+      "sql_checks": {
+        "must_contain_tables": ["customers"],
+        "must_use_strftime": true,
+        "must_use_aggregation": true,
+        "must_use_group_by": true,
+        "must_not_use_dml": true
+      },
+      "data_checks": {
+        "expected_columns_subset": ["month"],
+        "row_count_min": 12,
+        "column_pattern": {"month": "^\\d{4}-\\d{2}$"}
+      },
+      "analyst_checks": {
+        "chart_required": true,
+        "min_insights": 3,
+        "insights_must_mention": ["month"]
+      },
+      "report_checks": {
+        "required_sections": ["Executive Summary", "Key Findings", "Analysis", "Recommendations"],
+        "must_mention_numbers": true,
+        "max_words": 450
+      }
     }
   ]
 }

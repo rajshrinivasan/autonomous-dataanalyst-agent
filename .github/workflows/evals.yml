@@ -1,0 +1,52 @@
+name: Evals (Layer 4 — Nightly LLM Judge)
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 2 am UTC nightly
+  workflow_dispatch:
+    inputs:
+      optimize:
+        description: "Run bootstrap optimizer after evals (appends few-shot examples to instructions/)"
+        type: boolean
+        default: false
+
+jobs:
+  run-evals:
+    name: "LLM-as-Judge Eval Suite"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.12-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run eval suite
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PYTHONPATH: .
+        run: |
+          OPTIMIZE_FLAG=""
+          if [ "${{ github.event.inputs.optimize }}" = "true" ]; then
+            OPTIMIZE_FLAG="--optimize"
+          fi
+          pytest evals/ -m eval -v --save-results $OPTIMIZE_FLAG --tb=short
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: evals/results/
+          retention-days: 30

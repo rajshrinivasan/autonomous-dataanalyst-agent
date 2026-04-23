@@ -1,0 +1,47 @@
+name: Tests (Layers 1–3)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-and-invariant-tests:
+    name: "Python ${{ matrix.python-version }}"
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit, integration, and invariant tests
+        env:
+          PYTHONPATH: .
+          # No OPENAI_API_KEY — eval suite skips automatically via skipif marker
+          # No POSTGRES_DSN — tests/conftest.py supplies a dummy value
+        run: |
+          pytest tests/ \
+            --ignore=tests/e2e \
+            -m "not eval and not e2e" \
+            -v --tb=short
