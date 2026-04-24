@@ -349,13 +349,7 @@
   </div>
 
   <!-- Example questions -->
-  <div class="examples" id="examples">
-    <button class="ex-chip" onclick="setQuestion(this)">Top 5 categories by revenue?</button>
-    <button class="ex-chip" onclick="setQuestion(this)">Which month had the highest sales in 2024?</button>
-    <button class="ex-chip" onclick="setQuestion(this)">What is the gross margin by category?</button>
-    <button class="ex-chip" onclick="setQuestion(this)">Who are the top 10 customers by spend?</button>
-    <button class="ex-chip" onclick="setQuestion(this)">How does order status break down by country?</button>
-  </div>
+  <div class="examples" id="examples"></div>
 
   <!-- Main panels -->
   <div class="panels">
@@ -392,6 +386,35 @@
 <script>
 /* ── marked config ────────────────────────────────────────── */
 marked.setOptions({ breaks: true, gfm: true });
+
+/* ── Example questions per datasource ────────────────────── */
+const DEFAULT_EXAMPLES = [
+  'Top 5 categories by revenue?',
+  'Which month had the highest sales in 2024?',
+  'What is the gross margin by category?',
+  'Who are the top 10 customers by spend?',
+  'How does order status break down by country?',
+];
+const DS_EXAMPLES = {
+  'Analyst DB': [
+    'What is the current MRR by plan?',
+    'Which accounts churned in the last 90 days?',
+    'What is the monthly churn rate over time?',
+    'Which industry has the highest average MRR?',
+    'Who are the top 10 accounts by MRR?',
+  ],
+};
+
+function renderExamples() {
+  const sel = document.getElementById('dsSelect');
+  const label = sel.options[sel.selectedIndex]?.text || '';
+  const dsName = datasources.find(d => d.id === sel.value)?.name || '';
+  const questions = DS_EXAMPLES[dsName] || DEFAULT_EXAMPLES;
+  const container = document.getElementById('examples');
+  container.innerHTML = questions
+    .map(q => `<button class="ex-chip" onclick="setQuestion(this)">${escHtml(q)}</button>`)
+    .join('');
+}
 
 /* ── Agent / tool metadata ────────────────────────────────── */
 const AGENTS = {
@@ -592,6 +615,7 @@ function showApp() {
   renderHeader();
   applyRoleGating();
   loadDatasources();
+  document.getElementById('dsSelect').addEventListener('change', renderExamples);
 }
 
 /* ── Header ───────────────────────────────────────────────── */
@@ -635,7 +659,6 @@ async function loadDatasources() {
 
 function renderDsDropdown() {
   const sel = document.getElementById('dsSelect');
-  // Keep the default option, then add loaded datasources
   while (sel.options.length > 1) sel.remove(1);
   datasources.forEach(ds => {
     const opt = document.createElement('option');
@@ -643,6 +666,7 @@ function renderDsDropdown() {
     opt.textContent = `${ds.name} (${ds.type})`;
     sel.appendChild(opt);
   });
+  renderExamples();
 }
 
 /* ── Modal ────────────────────────────────────────────────── */

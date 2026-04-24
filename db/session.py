@@ -16,7 +16,7 @@ async def get_db_session(workspace_id: str | None = None) -> AsyncGenerator[Asyn
     async with AsyncSessionLocal() as session:
         if workspace_id:
             await session.execute(
-                text("SET LOCAL app.current_workspace_id = :wid"),
+                text("SELECT set_config('app.current_workspace_id', :wid, true)"),
                 {"wid": str(workspace_id)},
             )
         yield session

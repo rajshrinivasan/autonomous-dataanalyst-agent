@@ -43,5 +43,5 @@ if __name__ == "__main__":
 
     ensure_database()
 
-    print(f"Starting server  →  http://{args.host}:{args.port}")
+    print(f"Starting server at http://{args.host}:{args.port}")
     uvicorn.run("app:app", host=args.host, port=args.port, reload=False)
