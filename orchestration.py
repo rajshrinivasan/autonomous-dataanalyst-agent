@@ -1,248 +1,75 @@
 """
-Orchestration — Magentic-style delegation via openai-agents agent.as_tool()
----------------------------------------------------------------------------
-
-Each specialist (data_explorer, sql_writer, analyst, writer) is wrapped with
-Agent.as_tool() so the manager can call them as tools, receive their output,
-and continue orchestrating.  This gives true round-trip delegation — the
-manager retains control throughout the workflow.
+Orchestration — LangGraph-based analysis pipeline
+--------------------------------------------------
 
 Public interface
-  run_analysis(question) -> AsyncIterator[dict]
+  run_analysis(question, workspace_id, datasource_id) -> AsyncIterator[dict]
       Async generator yielding structured event dicts for SSE streaming.
+      Identical event format to the previous openai-agents implementation so
+      app.py and static/index.html require zero changes.
 
 CLI usage
   python orchestration.py "What are the top 5 product categories by revenue?"
 """
 
 import asyncio
-import os
-import re
 import sys
-from pathlib import Path
+import uuid
 from typing import AsyncIterator
 
-from agents import Agent, Runner
-from agents.mcp import MCPServerStdio
-from agents.stream_events import (
-    AgentUpdatedStreamEvent,
-    RawResponsesStreamEvent,
-    RunItemStreamEvent,
-)
 from dotenv import load_dotenv
-from openai.types.responses import ResponseTextDeltaEvent
-
-from tools import run_python_code
 
 load_dotenv()
-
-MODEL    = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-_INS_DIR = Path(__file__).parent / "instructions"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _load(name: str) -> str:
-    """Read an instruction file from the instructions/ directory."""
-    return (_INS_DIR / f"{name}.md").read_text(encoding="utf-8")
-
-
-def _mcp_server() -> MCPServerStdio:
-    """Return a configured stdio MCP server pointing at mcp_server.py."""
-    return MCPServerStdio(
-        params={
-            "command": sys.executable,
-            "args":    [str(Path(__file__).parent / "mcp_server.py")],
-            "cwd":     str(Path(__file__).parent),
-        },
-        cache_tools_list=True,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Agent factory
-# ---------------------------------------------------------------------------
-def build_team(sqlite_mcp: MCPServerStdio) -> Agent:
-    """
-    Construct all five agents.
-
-    Specialists are wrapped with .as_tool() so the manager can call them and
-    receive their output back — true magentic-style delegation.
-    """
-    data_explorer = Agent(
-        name="data_explorer",
-        model=MODEL,
-        instructions=_load("data_explorer"),
-        mcp_servers=[sqlite_mcp],
-    )
-
-    sql_writer = Agent(
-        name="sql_writer",
-        model=MODEL,
-        instructions=_load("sql_writer"),
-        mcp_servers=[sqlite_mcp],
-    )
-
-    analyst = Agent(
-        name="analyst",
-        model=MODEL,
-        instructions=_load("analyst"),
-        mcp_servers=[sqlite_mcp],
-        tools=[run_python_code],
-    )
-
-    writer = Agent(
-        name="writer",
-        model=MODEL,
-        instructions=_load("writer"),
-    )
-
-    manager = Agent(
-        name="manager",
-        model=MODEL,
-        instructions=_load("manager"),
-        tools=[
-            data_explorer.as_tool(
-                tool_name="call_data_explorer",
-                tool_description=(
-                    "Discover the database schema. "
-                    "Pass the business question as the input string."
-                ),
-            ),
-            sql_writer.as_tool(
-                tool_name="call_sql_writer",
-                tool_description=(
-                    "Write a SQLite SELECT query. "
-                    "Pass: the business question + the schema summary returned by call_data_explorer."
-                ),
-            ),
-            analyst.as_tool(
-                tool_name="call_analyst",
-                tool_description=(
-                    "Execute the SQL query, interpret results, and generate a chart. "
-                    "Pass: the business question + the SQL from call_sql_writer + "
-                    "a suggestion for chart type (bar, line, etc.)."
-                ),
-            ),
-            writer.as_tool(
-                tool_name="call_writer",
-                tool_description=(
-                    "Write the final narrative report. "
-                    "Pass: the business question + key insights from call_analyst + "
-                    "the chart filename if one was produced."
-                ),
-            ),
-        ],
-    )
-
-    return manager
-
-
-# ---------------------------------------------------------------------------
-# Streaming event types yielded to callers
-# ---------------------------------------------------------------------------
-# Each dict has a "type" key; app.py converts these to SSE data: fields.
-#
-#  {"type": "agent_switch", "agent": str}
-#  {"type": "text_delta",   "agent": str, "delta": str}
-#  {"type": "tool_call",    "agent": str, "tool": str}
-#  {"type": "tool_result",  "agent": str, "tool": str, "output": str}
-#  {"type": "chart",        "path": str}
-#  {"type": "done",         "output": str}
-#  {"type": "error",        "message": str}
 
 
 # ---------------------------------------------------------------------------
 # Public: run_analysis
 # ---------------------------------------------------------------------------
-async def run_analysis(question: str) -> AsyncIterator[dict]:
+
+async def run_analysis(
+    question: str,
+    workspace_id: str | None = None,
+    datasource_id: str | None = None,
+) -> AsyncIterator[dict]:
     """
-    Async generator.  Run the full magentic workflow for *question* and yield
-    structured event dicts suitable for forwarding as SSE.
+    Async generator.  Runs the LangGraph analysis workflow for *question* and
+    yields structured event dicts for SSE streaming.
+
+    Event types (identical to the previous openai-agents version):
+      {"type": "agent_switch", "agent": str}
+      {"type": "text_delta",   "agent": str, "delta": str}
+      {"type": "tool_call",    "agent": str, "tool": str}
+      {"type": "tool_result",  "agent": str, "output": str}
+      {"type": "chart",        "path": str}
+      {"type": "done",         "output": str}
+      {"type": "error",        "message": str}
     """
-    current_agent: str = "manager"
-    emitted_charts: set[str] = set()   # deduplicate chart events
+    from workflow.graph import get_graph
+    from workflow.sse_adapter import stream_as_sse
+
+    initial_state = {
+        "question": question,
+        "workspace_id": workspace_id,
+        "datasource_id": datasource_id,
+        "schema_summary": "",
+        "sql": "",
+        "lint_result": {},
+        "lint_revision_count": 0,
+        "query_results": [],
+        "chart_path": "",
+        "insights": "",
+        "report": "",
+        "current_agent": "",
+        "error": None,
+    }
+
+    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
     try:
-        async with _mcp_server() as sqlite_mcp:
-            manager = build_team(sqlite_mcp)
-
-            result = Runner.run_streamed(manager, question)
-
-            async for event in result.stream_events():
-
-                # ── Agent switch ─────────────────────────────────────────
-                if isinstance(event, AgentUpdatedStreamEvent):
-                    current_agent = event.new_agent.name
-                    yield {"type": "agent_switch", "agent": current_agent}
-
-                # ── Streaming text delta ─────────────────────────────────
-                elif isinstance(event, RawResponsesStreamEvent):
-                    raw = event.data
-                    if isinstance(raw, ResponseTextDeltaEvent):
-                        yield {
-                            "type":  "text_delta",
-                            "agent": current_agent,
-                            "delta": raw.delta,
-                        }
-
-                # ── Tool calls / results ─────────────────────────────────
-                elif isinstance(event, RunItemStreamEvent):
-                    item = event.item
-
-                    if item.type == "tool_call_item":
-                        tool_name = getattr(item.raw_item, "name", "tool")
-                        yield {
-                            "type":  "tool_call",
-                            "agent": current_agent,
-                            "tool":  tool_name,
-                        }
-
-                    elif item.type == "tool_call_output_item":
-                        # item.output may be a string or list of MCP content blocks
-                        raw_out = item.output
-                        if isinstance(raw_out, str):
-                            output = raw_out
-                        elif isinstance(raw_out, list):
-                            output = " ".join(
-                                (b.text if hasattr(b, "text") else str(b))
-                                for b in raw_out
-                            )
-                        else:
-                            output = str(raw_out) if raw_out else ""
-
-                        # Detect chart files in the analyst's output (deduplicated).
-                        # Strategy 1: explicit CHART_SAVED: prefix
-                        chart_found = False
-                        for line in output.splitlines():
-                            if line.startswith("CHART_SAVED:"):
-                                chart_path = line[len("CHART_SAVED:"):].strip()
-                                if chart_path not in emitted_charts:
-                                    emitted_charts.add(chart_path)
-                                    yield {"type": "chart", "path": chart_path}
-                                chart_found = True
-                                break
-
-                        if not chart_found:
-                            # Strategy 2: regex scan for chart_<hex>.png anywhere in text
-                            charts_dir = Path(os.getenv("CHARTS_DIR", "output/charts"))
-                            for match in re.finditer(r"chart_[0-9a-f]{8,}\.png", output):
-                                candidate = charts_dir / match.group()
-                                key = str(candidate)
-                                if candidate.exists() and key not in emitted_charts:
-                                    emitted_charts.add(key)
-                                    yield {"type": "chart", "path": key}
-                                    break
-
-                        yield {
-                            "type":   "tool_result",
-                            "agent":  current_agent,
-                            "output": output[:400] + ("..." if len(output) > 400 else ""),
-                        }
-
-            # ── Final synthesised output ─────────────────────────────────
-            yield {"type": "done", "output": result.final_output}
+        graph = await get_graph()
+        events = graph.astream_events(initial_state, config=config, version="v2")
+        async for sse_event in stream_as_sse(events):
+            yield sse_event
 
     except Exception as exc:
         yield {"type": "error", "message": str(exc)}
@@ -251,6 +78,7 @@ async def run_analysis(question: str) -> AsyncIterator[dict]:
 # ---------------------------------------------------------------------------
 # CLI runner — for local testing without the web UI
 # ---------------------------------------------------------------------------
+
 async def _cli_main(question: str) -> None:
     RESET  = "\033[0m"
     BOLD   = "\033[1m"
@@ -289,7 +117,6 @@ async def _cli_main(question: str) -> None:
 
 
 if __name__ == "__main__":
-    # Force UTF-8 output so agent text (which may contain non-ASCII chars) prints cleanly.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 

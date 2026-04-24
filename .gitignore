@@ -12,9 +12,11 @@ __pycache__/
 
 # Generated outputs
 output/**/*.png
+output/**/*.json
 
-# Generated database (recreate with: python data/seed_db.py)
+# Generated databases (recreate with: python data/seed_db.py / seed_analyst_db.py)
 data/sample.db
+data/analyst.db
 
 # IDE / OS
 .vscode/
@@ -32,3 +34,7 @@ tmp/
 
 # Personal practice exercises
 exercises/
+
+# Eval result files (gitignored; add --save-results flag to persist)
+evals/results/*.json
+server.err
