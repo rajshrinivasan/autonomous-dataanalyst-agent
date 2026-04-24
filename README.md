@@ -2,7 +2,7 @@
 
 Ask a business question in plain English. A team of AI agents queries a database, generates a chart, and writes a structured report — all streamed live to a web UI.
 
-**Stack:** OpenAI `gpt-4o-mini` · LangGraph · LangChain MCP Adapters · FastMCP · FastAPI · Server-Sent Events · Docker · PostgreSQL · JWT/RS256
+**Stack:** OpenAI `gpt-4o-mini` · LangGraph · LangChain MCP Adapters · FastMCP · FastAPI · Server-Sent Events · Docker sandbox · PostgreSQL · Clerk · JWT/RS256
 
 ---
 
@@ -279,22 +279,28 @@ The datasource is stored in Postgres scoped to your workspace (enforced by RLS).
 
 ## Testing
 
-The project uses a 4-layer testing pyramid:
+The project uses a 5-layer testing pyramid, each layer adding progressively more confidence at higher cost:
 
-### Layer 1 — Unit Tests (`tests/`)
-FastAPI endpoints, JWT auth, governance rules, MCP tools, sandbox execution, SSE event mapping, state transitions.
+### Layer 1 — Unit Tests (`tests/unit/`)
+Pure function tests with no external dependencies: JWT auth logic, governance lint rules, MCP tool parsing, SSE event mapping, workflow state transitions.
 
-### Layer 2 — Integration Tests (`tests/`)
-End-to-end LangGraph graph execution with mocked OpenAI responses; Playwright browser tests in `tests/e2e/`.
+### Layer 2 — Integration Tests (`tests/integration/`)
+End-to-end LangGraph graph execution with mocked OpenAI responses; FastAPI endpoint tests against a real SQLite database.
 
-### Layer 3 — Deterministic Invariants (`tests/test_invariants.py`)
-Three behavioral guarantees verified **without any LLM call**:
+### Layer 3 — Deterministic Invariants (`tests/invariants/`)
+Three behavioral guarantees verified **without any LLM call** — these can never regress silently:
 - **I1 — DML/DDL Rejection**: `run_query()` always rejects non-SELECT statements
 - **I2 — Row Limit Enforcement**: queries are always capped at `datasource.row_limit`
 - **I3 — Schema Consistency**: `data_explorer` output matches actual DB schema
 
-### Layer 4 — LLM-as-Judge Evals (`evals/`)
-Golden test cases with two-layer scoring:
+### Layer 4 — Sandbox Tests (`tests/sandbox/`)
+Docker container execution tests: code runs in the locked-down sandbox, chart files are produced, resource limits are enforced.
+
+### Layer 5 — Browser E2E (`tests/e2e/`)
+Playwright tests that drive the full UI flow: auth, question submission, activity feed, chart render, report panel.
+
+### LLM-as-Judge Evals (`evals/`)
+Golden test cases with two-layer scoring (separate from the test pyramid — run on a schedule, not in CI):
 - **Deterministic** (free, always runs): SQL structural checks, execution, data properties, chart presence, report section checks
 - **LLM judge** (optional, paid): semantic SQL quality, insight groundedness, report clarity
 
@@ -373,20 +379,26 @@ Autonomous Data Analyst/
 │   ├── judge_prompts.py       LLM judge prompt templates
 │   └── cases/golden_cases.json  ~6 end-to-end test cases with expectations
 │
-├── tests/                     Unit, integration, invariant tests
-│   ├── test_invariants.py     3 behavioral guarantees (no LLM required)
-│   ├── test_app.py            FastAPI endpoints
-│   ├── test_auth.py           JWT verification
-│   ├── test_governance.py     SQL lint / cost estimation
-│   ├── test_mcp_server.py     MCP tools
-│   ├── test_sandbox.py        Docker execution
-│   ├── test_sse_adapter.py    Event stream mapping
-│   ├── test_workflow_state.py State transitions
-│   ├── test_workflow_integration.py  End-to-end workflow
-│   └── e2e/test_playwright.py        Browser-based E2E
+├── tests/                     5-layer testing pyramid
+│   ├── unit/                  No external deps — fast, always run
+│   │   ├── test_auth.py       JWT verification
+│   │   ├── test_governance.py SQL lint rules
+│   │   ├── test_mcp_server.py MCP tool parsing
+│   │   ├── test_sse_adapter.py Event stream mapping
+│   │   └── test_workflow_state.py State transitions
+│   ├── integration/           LangGraph + FastAPI + SQLite
+│   │   ├── test_app.py        FastAPI endpoints
+│   │   └── test_workflow_integration.py End-to-end graph run
+│   ├── invariants/            3 behavioral guarantees (no LLM required)
+│   │   └── test_invariants.py DML rejection, row limit, schema consistency
+│   ├── sandbox/               Docker container execution
+│   │   └── test_sandbox.py    Chart generation, resource limits
+│   └── e2e/                   Browser-based E2E (Playwright)
+│       └── test_playwright.py Auth flow, submit, activity feed, chart
 │
 ├── data/
-│   ├── seed_db.py             Creates sample.db
+│   ├── seed_db.py             Creates sample.db (e-commerce dataset)
+│   ├── seed_analyst_db.py     Creates analyst.db (SaaS metrics dataset)
 │   └── sample.db              8 categories, 46 products, 300 customers,
 │                              1 200 orders, 3 551 line items
 │
